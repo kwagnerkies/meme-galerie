@@ -1,0 +1,22 @@
+# Lokal testen:  docker compose up --build   ->  http://localhost:3000
+services:
+  meme-galerie:
+    build: .
+    image: meme-galerie:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      APP_USERNAME: cloud
+      APP_PASSWORD: hosting
+      MAX_UPLOAD_MB: "15"
+      # Lokal ohne Reverse-Proxy: X-Forwarded-*-Header nicht vertrauen
+      TRUST_PROXY: "false"
+    volumes:
+      - meme-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+volumes:
+  meme-data:

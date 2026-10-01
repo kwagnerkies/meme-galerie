@@ -1,0 +1,13 @@
+{
+  "name": "meme-galerie",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interne Meme-Galerie mit Login, Upload und Suche",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
