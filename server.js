@@ -23,6 +23,8 @@ const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 15) * 1024 * 1024;
 const TRUST_PROXY = process.env.TRUST_PROXY !== 'false';
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_NAME_LENGTH = 120;
+const MAX_COMMENT_LENGTH = 500;
+const MAX_COMMENTS = 200; // pro Meme, damit memes.json nicht unbegrenzt wächst
 const MAX_PARALLEL_UPLOADS = 4;
 
 const EXT_TO_MIME = Object.fromEntries(Object.entries(TYPES).map(([mime, t]) => [t.ext, mime]));
@@ -51,12 +53,12 @@ function writeJson(file, data) {
 let memes = readJson(DB_FILE, []);
 const saveDb = () => writeJson(DB_FILE, memes);
 
-function cleanName(value) {
+function cleanName(value, maxLength = MAX_NAME_LENGTH) {
   return String(value || '')
     .replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '') // Steuer- und Bidi-Zeichen
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, MAX_NAME_LENGTH);
+    .slice(0, maxLength);
 }
 
 // ---------- Login / Session ----------
@@ -235,6 +237,25 @@ function sameOrigin(req) {
 
 let activeUploads = 0;
 
+// Liest ein Bild aus dem Request-Body, bereinigt und speichert es.
+// Ergebnis: { id, file } oder { status, error }.
+async function storeUpload(req) {
+  if (activeUploads >= MAX_PARALLEL_UPLOADS) return { status: 503, error: 'Gerade viel los – bitte gleich nochmal versuchen' };
+  activeUploads++;
+  let body;
+  try {
+    body = await readBody(req, MAX_UPLOAD_BYTES);
+  } finally {
+    activeUploads--;
+  }
+  const image = processImage(body);
+  if (!image) return { status: 415, error: 'Nur gültige JPG-, PNG-, GIF- oder WebP-Bilder erlaubt' };
+  const id = crypto.randomUUID();
+  const file = id + image.ext;
+  fs.writeFileSync(path.join(UPLOAD_DIR, file), image.data, { mode: 0o600 });
+  return { id, file };
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const { pathname } = url;
@@ -312,31 +333,51 @@ async function handle(req, res) {
   if (pathname === '/api/memes' && method === 'POST') {
     const name = cleanName(url.searchParams.get('name'));
     if (!name) return sendJson(req, res, 400, { error: 'Bitte einen Namen angeben' });
-    if (activeUploads >= MAX_PARALLEL_UPLOADS) return sendJson(req, res, 503, { error: 'Gerade viel los – bitte gleich nochmal versuchen' });
-    activeUploads++;
-    let image;
-    try {
-      image = processImage(await readBody(req, MAX_UPLOAD_BYTES));
-    } finally {
-      activeUploads--;
-    }
-    if (!image) return sendJson(req, res, 415, { error: 'Nur gültige JPG-, PNG-, GIF- oder WebP-Bilder erlaubt' });
-
-    const id = crypto.randomUUID();
-    const file = id + image.ext;
-    fs.writeFileSync(path.join(UPLOAD_DIR, file), image.data, { mode: 0o600 });
-    const meme = { id, name, file, createdAt: new Date().toISOString() };
+    const up = await storeUpload(req);
+    if (up.error) return sendJson(req, res, up.status, { error: up.error });
+    const meme = { id: up.id, name, file: up.file, createdAt: new Date().toISOString() };
     memes.push(meme);
     saveDb();
     return sendJson(req, res, 201, meme);
   }
 
-  const match = pathname.match(/^\/api\/memes\/([a-f0-9-]{36})$/);
+  const match = pathname.match(/^\/api\/memes\/([a-f0-9-]{36})(\/comments)?$/);
   if (match) {
     const meme = memes.find((m) => m.id === match[1]);
     if (!meme) return sendJson(req, res, 404, { error: 'Meme nicht gefunden' });
+    const isComment = Boolean(match[2]);
 
-    if (method === 'PATCH') {
+    // Kommentar: Text URL-kodiert im Header (landet so nicht in Proxy-Logs),
+    // optional ein Bild als roher Request-Body (wie beim Upload)
+    if (isComment && method === 'POST') {
+      let text;
+      try {
+        text = cleanName(decodeURIComponent(req.headers['x-comment-text'] || ''), MAX_COMMENT_LENGTH);
+      } catch {
+        return sendJson(req, res, 400, { error: 'Ungültige Anfrage' });
+      }
+      // Reine Text-Kommentare belegen keinen Upload-Platz
+      const hasBody = Number(req.headers['content-length']) > 0 || 'transfer-encoding' in req.headers;
+      const up = hasBody ? await storeUpload(req) : {};
+      if (up.error) return sendJson(req, res, up.status, { error: up.error });
+      // Erst nach dem Upload prüfen: währenddessen kann das Meme gelöscht oder voll geworden sein
+      const gone = !memes.includes(meme);
+      if (gone || (meme.comments || []).length >= MAX_COMMENTS) {
+        if (up.file) fs.rm(path.join(UPLOAD_DIR, up.file), { force: true }, () => {});
+        return gone
+          ? sendJson(req, res, 404, { error: 'Meme nicht gefunden' })
+          : sendJson(req, res, 400, { error: 'Zu viele Kommentare an diesem Meme' });
+      }
+      if (!text && !up.file) return sendJson(req, res, 400, { error: 'Bitte einen Kommentar eingeben oder ein Bild anhängen' });
+      const comment = { id: crypto.randomUUID(), text, createdAt: new Date().toISOString() };
+      if (up.file) comment.file = up.file;
+      meme.comments = meme.comments || []; // ältere Memes haben noch kein Feld
+      meme.comments.push(comment);
+      saveDb();
+      return sendJson(req, res, 201, meme);
+    }
+
+    if (method === 'PATCH' && !isComment) {
       let body;
       try {
         body = JSON.parse((await readBody(req, 4 * 1024)).toString() || '{}');
@@ -350,10 +391,11 @@ async function handle(req, res) {
       return sendJson(req, res, 200, meme);
     }
 
-    if (method === 'DELETE') {
+    if (method === 'DELETE' && !isComment) {
       memes = memes.filter((m) => m.id !== meme.id);
       saveDb();
-      fs.rm(path.join(UPLOAD_DIR, meme.file), { force: true }, () => {});
+      const files = [meme.file, ...(meme.comments || []).map((c) => c.file).filter(Boolean)];
+      for (const file of files) fs.rm(path.join(UPLOAD_DIR, file), { force: true }, () => {});
       return send(req, res, 204, '');
     }
   }

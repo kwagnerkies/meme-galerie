@@ -5,7 +5,8 @@ Interne Galerie für Memes: Login, Bilder hochladen und benennen, Galerie mit Su
 - Ein Node.js-Server ohne externe Abhängigkeiten, also kein `npm install` nötig
 - Bilder (JPG, PNG, GIF, WebP, max. 15 MB) liegen in `/data/uploads`, Namen in `/data/memes.json`
 - Hochladen per Button, Drag & Drop oder Strg+V (Screenshot aus der Zwischenablage)
-- Klick auf ein Bild: groß ansehen, umbenennen, herunterladen, löschen
+- Klick auf ein Bild: groß ansehen, kommentieren, umbenennen, herunterladen, löschen
+- Kommentare (max. 500 Zeichen, 200 pro Meme) liegen mit in `memes.json`. Ein Kommentar kann ein Bild enthalten (📎, Strg+V oder Drag & Drop), es gelten dieselben Regeln wie beim Upload
 
 ## Sicherheit
 

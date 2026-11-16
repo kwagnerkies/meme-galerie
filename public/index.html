@@ -44,6 +44,13 @@
   <!-- Detailansicht -->
   <dialog id="view-dialog" class="view">
     <img id="view-img" alt="">
+    <ul id="comments" class="comments" aria-label="Kommentare"></ul>
+    <form id="comment-form" class="rename">
+      <input id="comment-text" maxlength="500" placeholder="Kommentar schreiben …" aria-label="Kommentar">
+      <input id="comment-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
+      <button type="button" class="ghost" id="comment-attach" title="Bild anhängen (auch per Strg+V oder Drag &amp; Drop)">📎</button>
+      <button type="submit" class="ghost" id="comment-submit">Senden</button>
+    </form>
     <form id="rename-form" class="rename">
       <input id="view-name" maxlength="120" required aria-label="Name">
       <button type="submit" class="primary">Speichern</button>
