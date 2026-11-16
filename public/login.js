@@ -1,8 +1,13 @@
-const error = new URLSearchParams(location.search).get('error');
+const params = new URLSearchParams(location.search);
+const MESSAGES = {
+  blocked: 'Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.',
+  oidc: 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.',
+};
+const error = params.get('error');
 if (error) {
   const el = document.getElementById('error');
-  el.textContent = error === 'blocked'
-    ? 'Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.'
-    : 'Benutzername oder Passwort falsch.';
+  el.textContent = MESSAGES[error] || 'Benutzername oder Passwort falsch.';
   el.hidden = false;
 }
+const info = document.getElementById('info');
+if (info && params.has('logout')) info.textContent = 'Du bist abgemeldet.';

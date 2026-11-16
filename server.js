@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { TYPES, processImage } = require('./image');
+const { createOidcClient } = require('./oidc');
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -21,7 +22,30 @@ const PASSWORD = process.env.APP_PASSWORD || 'hosting';
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 15) * 1024 * 1024;
 // Hinter dem mittwald-Proxy kommt die echte Client-IP aus X-Forwarded-For
 const TRUST_PROXY = process.env.TRUST_PROXY !== 'false';
-const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+
+// OpenID Connect (e.g. Keycloak): enabled when OIDC_ISSUER is set. Password login is then disabled.
+const OIDC_ISSUER = process.env.OIDC_ISSUER || '';
+const OIDC_CLIENT_ID = process.env.OIDC_CLIENT_ID || '';
+const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
+const OIDC_ENABLED = Boolean(OIDC_ISSUER);
+if (OIDC_ENABLED && (!OIDC_CLIENT_ID || !/^https?:\/\/[^/]+$/.test(APP_URL))) {
+  console.error('FEHLER: Für OIDC müssen OIDC_CLIENT_ID und APP_URL (z. B. https://memes.example.de) gesetzt sein.');
+  process.exit(1);
+}
+const oidc = OIDC_ENABLED
+  ? createOidcClient({
+      issuer: OIDC_ISSUER,
+      clientId: OIDC_CLIENT_ID,
+      clientSecret: process.env.OIDC_CLIENT_SECRET || '',
+      redirectUri: `${APP_URL}/auth/callback`,
+      scope: process.env.OIDC_SCOPE || 'openid profile email',
+    })
+  : null;
+const OIDC_PENDING_S = 10 * 60;
+
+// With OIDC a short session is enough: re-login is a single SSO redirect, and users removed
+// in the identity provider lose access soon.
+const SESSION_MS = (OIDC_ENABLED ? 12 : 30 * 24) * 60 * 60 * 1000;
 const MAX_NAME_LENGTH = 120;
 const MAX_COMMENT_LENGTH = 500;
 const MAX_COMMENTS = 200; // pro Meme, damit memes.json nicht unbegrenzt wächst
@@ -69,12 +93,19 @@ const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex'
 
 const sessionStore = readJson(SESSION_FILE, {});
 const credentialSalt = sessionStore.salt || crypto.randomBytes(16).toString('hex');
-const credentialHash = crypto.scryptSync(`${USERNAME}\n${PASSWORD}`, credentialSalt, 32).toString('hex');
+// Switching login mode, issuer or client also logs out all devices
+const credentialInput = OIDC_ENABLED ? `oidc\n${OIDC_ISSUER}\n${OIDC_CLIENT_ID}` : `${USERNAME}\n${PASSWORD}`;
+const credentialHash = crypto.scryptSync(credentialInput, credentialSalt, 32).toString('hex');
 let sessions = sessionStore.credentialHash === credentialHash ? sessionStore.sessions || {} : {};
+
+// Sessions are stored as { expires, user }; older ones are a plain expiry timestamp
+function sessionExpires(session) {
+  return typeof session === 'number' ? session : session.expires;
+}
 
 function saveSessions() {
   const now = Date.now();
-  for (const [id, expires] of Object.entries(sessions)) if (expires < now) delete sessions[id];
+  for (const [id, session] of Object.entries(sessions)) if (sessionExpires(session) < now) delete sessions[id];
   writeJson(SESSION_FILE, { salt: credentialSalt, credentialHash, sessions });
 }
 saveSessions();
@@ -106,9 +137,15 @@ function sessionId(req) {
   return token && /^[A-Za-z0-9_-]{43}$/.test(token) ? sha256(token) : null;
 }
 
-function isLoggedIn(req) {
+// The user shown as uploader/comment author. With password login everybody shares one account.
+const PASSWORD_USER = { id: 'local', name: USERNAME };
+
+
+function currentUser(req) {
   const id = sessionId(req);
-  return Boolean(id && sessions[id] && sessions[id] > Date.now());
+  const session = id && sessions[id];
+  if (!session || sessionExpires(session) <= Date.now()) return null;
+  return typeof session === 'number' ? PASSWORD_USER : session.user;
 }
 
 function isHttps(req) {
@@ -118,6 +155,18 @@ function isHttps(req) {
 function sessionCookie(req, value, maxAgeSeconds) {
   const secure = isHttps(req) ? '; Secure' : '';
   return `session=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+function oidcPendingCookie(req, value, maxAgeSeconds) {
+  const secure = isHttps(req) ? '; Secure' : '';
+  return `oidc_pending=${value}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+function createSession(req, res, user, extraCookies = []) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  sessions[sha256(token)] = { expires: Date.now() + SESSION_MS, user };
+  saveSessions();
+  return redirect(req, res, '/', { 'Set-Cookie': [sessionCookie(req, token, SESSION_MS / 1000), ...extraCookies] });
 }
 
 function clientIp(req) {
@@ -268,11 +317,61 @@ async function handle(req, res) {
   }
 
   if (pathname === '/login' && method === 'GET') {
-    if (isLoggedIn(req)) return redirect(req, res, '/');
-    return serveStatic(req, res, 'login.html');
+    if (currentUser(req)) return redirect(req, res, '/');
+    if (!OIDC_ENABLED) return serveStatic(req, res, 'login.html');
+    // Bare /login goes straight to the identity provider. After an error or logout the page
+    // with the button is shown, otherwise SSO would log the user right back in.
+    if (!url.search) return redirect(req, res, '/auth/login');
+    return serveStatic(req, res, 'login-oidc.html');
+  }
+
+  if (OIDC_ENABLED && pathname === '/auth/login' && method === 'GET') {
+    let start;
+    try {
+      start = await oidc.startLogin();
+    } catch (err) {
+      console.error(err.message);
+      return redirect(req, res, '/login?error=oidc');
+    }
+    const value = Buffer.from(JSON.stringify(start.pending)).toString('base64url');
+    return redirect(req, res, start.url, { 'Set-Cookie': oidcPendingCookie(req, value, OIDC_PENDING_S) });
+  }
+
+  if (OIDC_ENABLED && pathname === '/auth/callback' && method === 'GET') {
+    const clear = { 'Set-Cookie': oidcPendingCookie(req, '', 0) };
+    let pending;
+    try {
+      pending = JSON.parse(Buffer.from(parseCookies(req).oidc_pending || '', 'base64url').toString());
+    } catch {
+      pending = null;
+    }
+    const state = url.searchParams.get('state') || '';
+    const code = url.searchParams.get('code') || '';
+    if (url.searchParams.get('error')) {
+      console.warn(`OIDC-Login abgebrochen: ${cleanName(url.searchParams.get('error'), 100)}`);
+      return redirect(req, res, '/login?error=oidc', clear);
+    }
+    if (!pending || typeof pending.state !== 'string' || !state || !safeEqual(state, pending.state) || !code) {
+      console.warn(`OIDC-Callback mit ungültigem state von ${clientIp(req)}`);
+      return redirect(req, res, '/login?error=oidc', clear);
+    }
+    let claims;
+    try {
+      claims = await oidc.finishLogin(code, pending);
+    } catch (err) {
+      console.error(err.message);
+      return redirect(req, res, '/login?error=oidc', clear);
+    }
+    const user = {
+      id: String(claims.sub),
+      name: cleanName(claims.name || claims.preferred_username || claims.email || claims.sub, 100),
+    };
+    console.log(`OIDC-Login: ${user.name} (${user.id})`);
+    return createSession(req, res, user, [clear['Set-Cookie']]);
   }
 
   if (pathname === '/login' && method === 'POST') {
+    if (OIDC_ENABLED) return send(req, res, 404, 'Nicht gefunden');
     const ip = clientIp(req);
     if (isBlocked(ip)) return redirect(req, res, '/login?error=blocked');
     const params = new URLSearchParams((await readBody(req, 4 * 1024)).toString());
@@ -285,10 +384,7 @@ async function handle(req, res) {
       return redirect(req, res, '/login?error=1');
     }
     failedLogins.delete(ip);
-    const token = crypto.randomBytes(32).toString('base64url');
-    sessions[sha256(token)] = Date.now() + SESSION_MS;
-    saveSessions();
-    return redirect(req, res, '/', { 'Set-Cookie': sessionCookie(req, token, SESSION_MS / 1000) });
+    return createSession(req, res, PASSWORD_USER);
   }
 
   if (pathname === '/logout' && method === 'POST') {
@@ -297,14 +393,15 @@ async function handle(req, res) {
       delete sessions[id];
       saveSessions();
     }
-    return redirect(req, res, '/login', { 'Set-Cookie': sessionCookie(req, '', 0) });
+    return redirect(req, res, OIDC_ENABLED ? '/login?logout=1' : '/login', { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 
   // Login-Seite braucht CSS und JS ohne Anmeldung
   if (pathname === '/style.css' || pathname === '/login.js') return serveStatic(req, res, pathname.slice(1));
 
   // Ab hier nur mit Login
-  if (!isLoggedIn(req)) {
+  const user = currentUser(req);
+  if (!user) {
     if (pathname.startsWith('/api/')) return sendJson(req, res, 401, { error: 'Nicht angemeldet' });
     return redirect(req, res, '/login');
   }
@@ -323,6 +420,8 @@ async function handle(req, res) {
     });
   }
 
+  if (pathname === '/api/me' && method === 'GET') return sendJson(req, res, 200, user);
+
   if (pathname === '/api/memes' && method === 'GET') {
     const q = (url.searchParams.get('q') || '').toLowerCase().trim();
     const list = q ? memes.filter((m) => m.name.toLowerCase().includes(q)) : memes;
@@ -335,17 +434,32 @@ async function handle(req, res) {
     if (!name) return sendJson(req, res, 400, { error: 'Bitte einen Namen angeben' });
     const up = await storeUpload(req);
     if (up.error) return sendJson(req, res, up.status, { error: up.error });
-    const meme = { id: up.id, name, file: up.file, createdAt: new Date().toISOString() };
+    const meme = { id: up.id, name, file: up.file, createdAt: new Date().toISOString(), uploadedBy: user };
     memes.push(meme);
     saveDb();
     return sendJson(req, res, 201, meme);
   }
 
-  const match = pathname.match(/^\/api\/memes\/([a-f0-9-]{36})(\/comments)?$/);
+  const match = pathname.match(/^\/api\/memes\/([a-f0-9-]{36})(\/comments(?:\/([a-f0-9-]{36}))?)?$/);
   if (match) {
     const meme = memes.find((m) => m.id === match[1]);
     if (!meme) return sendJson(req, res, 404, { error: 'Meme nicht gefunden' });
     const isComment = Boolean(match[2]);
+    const commentId = match[3];
+
+    // Only the author may delete a comment (with password login everybody shares one user)
+    if (commentId && method === 'DELETE') {
+      const comment = (meme.comments || []).find((c) => c.id === commentId);
+      if (!comment) return sendJson(req, res, 404, { error: 'Kommentar nicht gefunden' });
+      if (!comment.author || comment.author.id !== user.id) {
+        return sendJson(req, res, 403, { error: 'Nur eigene Kommentare können gelöscht werden' });
+      }
+      meme.comments = meme.comments.filter((c) => c !== comment);
+      saveDb();
+      if (comment.file) fs.rm(path.join(UPLOAD_DIR, comment.file), { force: true }, () => {});
+      return sendJson(req, res, 200, meme);
+    }
+    if (commentId) return send(req, res, 404, 'Nicht gefunden');
 
     // Kommentar: Text URL-kodiert im Header (landet so nicht in Proxy-Logs),
     // optional ein Bild als roher Request-Body (wie beim Upload)
@@ -369,7 +483,7 @@ async function handle(req, res) {
           : sendJson(req, res, 400, { error: 'Zu viele Kommentare an diesem Meme' });
       }
       if (!text && !up.file) return sendJson(req, res, 400, { error: 'Bitte einen Kommentar eingeben oder ein Bild anhängen' });
-      const comment = { id: crypto.randomUUID(), text, createdAt: new Date().toISOString() };
+      const comment = { id: crypto.randomUUID(), text, createdAt: new Date().toISOString(), author: user };
       if (up.file) comment.file = up.file;
       meme.comments = meme.comments || []; // ältere Memes haben noch kein Feld
       meme.comments.push(comment);
@@ -424,7 +538,9 @@ server.keepAliveTimeout = 5 * 1000;
 
 server.listen(PORT, () => {
   console.log(`Meme-Galerie läuft auf Port ${PORT}, Daten in ${DATA_DIR}`);
-  if (PASSWORD === 'hosting' || PASSWORD.length < 12) {
+  if (OIDC_ENABLED) {
+    console.log(`Login per OIDC über ${OIDC_ISSUER}, Redirect-URI ${APP_URL}/auth/callback`);
+  } else if (PASSWORD === 'hosting' || PASSWORD.length < 12) {
     console.warn('WARNUNG: Schwaches Passwort. Für den Betrieb APP_PASSWORD auf ein langes, zufälliges Passwort setzen.');
   }
 });

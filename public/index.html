@@ -11,6 +11,7 @@
     <h1 class="logo">Meme-Galerie</h1>
     <input id="search" type="search" placeholder="Memes nach Namen suchen …" autocomplete="off" aria-label="Suche">
     <button id="open-upload" class="primary">+ Hochladen</button>
+    <span id="me" class="muted me"></span>
     <form method="post" action="/logout">
       <button type="submit" class="ghost">Abmelden</button>
     </form>
@@ -44,6 +45,7 @@
   <!-- Detailansicht -->
   <dialog id="view-dialog" class="view">
     <img id="view-img" alt="">
+    <p id="view-meta" class="muted meta"></p>
     <ul id="comments" class="comments" aria-label="Kommentare"></ul>
     <form id="comment-form" class="rename">
       <input id="comment-text" maxlength="500" placeholder="Kommentar schreiben …" aria-label="Kommentar">

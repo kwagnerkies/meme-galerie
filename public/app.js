@@ -9,6 +9,7 @@ const viewDialog = $('view-dialog');
 let memes = [];
 let selectedFile = null;
 let current = null;
+let me = null;
 
 async function api(url, options = {}) {
   const res = await fetch(url, options);
@@ -46,6 +47,7 @@ function render() {
     const caption = document.createElement('span');
     caption.className = 'caption';
     caption.textContent = meme.name;
+    if (meme.uploadedBy) card.title = `${meme.name} – von ${meme.uploadedBy.name}`;
     const foot = document.createElement('span');
     foot.className = 'card-foot';
     foot.append(caption);
@@ -164,6 +166,8 @@ function openView(meme) {
   $('view-img').src = `/uploads/${meme.file}`;
   $('view-img').alt = meme.name;
   $('view-name').value = meme.name;
+  const date = new Date(meme.createdAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+  $('view-meta').textContent = meme.uploadedBy ? `Hochgeladen von ${meme.uploadedBy.name} am ${date}` : `Hochgeladen am ${date}`;
   $('view-download').href = `/uploads/${meme.file}`;
   $('view-download').download = meme.name + meme.file.slice(meme.file.lastIndexOf('.'));
   resetCommentForm();
@@ -197,7 +201,25 @@ function renderComments() {
     const time = document.createElement('time');
     time.dateTime = comment.createdAt;
     time.textContent = new Date(comment.createdAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
-    li.append(time, comment.text);
+    const head = document.createElement('span');
+    head.className = 'comment-head';
+    if (comment.author) {
+      const author = document.createElement('strong');
+      author.textContent = comment.author.name;
+      head.append(author);
+    }
+    head.append(time);
+    if (me && comment.author && comment.author.id === me.id) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'comment-delete';
+      del.textContent = '✕';
+      del.title = 'Kommentar löschen';
+      del.setAttribute('aria-label', 'Kommentar löschen');
+      del.addEventListener('click', () => deleteComment(comment));
+      head.append(del);
+    }
+    li.append(head, comment.text);
     if (comment.file) {
       const img = document.createElement('img');
       img.src = `/uploads/${comment.file}`;
@@ -208,6 +230,18 @@ function renderComments() {
     return li;
   }));
   $('comments').scrollTop = $('comments').scrollHeight;
+}
+
+async function deleteComment(comment) {
+  if (!confirm('Kommentar wirklich löschen?')) return;
+  const meme = current;
+  try {
+    Object.assign(meme, await api(`/api/memes/${meme.id}/comments/${comment.id}`, { method: 'DELETE' }));
+    if (current === meme) renderComments();
+    render();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 $('comment-form').addEventListener('submit', async (e) => {
@@ -269,4 +303,8 @@ for (const dialog of [uploadDialog, viewDialog]) {
   });
 }
 
-load().catch((err) => { statusEl.textContent = err.message; });
+api('/api/me')
+  .then((user) => { me = user; $('me').textContent = user.name; })
+  .catch(() => {})
+  .then(load)
+  .catch((err) => { statusEl.textContent = err.message; });

@@ -85,6 +85,7 @@ label { display: grid; gap: 0.35rem; font-size: 0.9rem; }
   .topbar { flex-wrap: wrap; padding: 0.75rem 1rem; }
   .logo { flex: 1; }
   #search { order: 10; flex-basis: 100%; max-width: none; }
+  .me { display: none; }
 }
 
 /* ---------- Galerie ---------- */
@@ -172,7 +173,13 @@ dialog.view { width: min(960px, calc(100vw - 32px)); }
 .comments:empty { display: none; }
 .comments li { padding: 0.5rem 0.75rem; background: var(--bg); border-radius: 8px; overflow-wrap: anywhere; }
 .comments img { display: block; max-width: 100%; max-height: 240px; margin-top: 0.35rem; border-radius: 8px; }
-.comments time { display: block; font-size: 0.75rem; color: var(--muted); }
+.comments time { font-size: 0.75rem; color: var(--muted); }
+.comment-head { display: flex; align-items: baseline; gap: 0.5rem; }
+.comment-head strong { font-size: 0.85rem; }
+.comment-delete { margin-left: auto; padding: 0 0.35rem; background: transparent; color: var(--muted); font-size: 0.8rem; }
+.comment-delete:hover { color: var(--danger); }
+.view .meta { margin: 0.25rem 0 0.75rem; font-size: 0.85rem; }
+.me { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12rem; }
 
 /* ---------- Login ---------- */
 
@@ -193,5 +200,6 @@ dialog.view { width: min(960px, calc(100vw - 32px)); }
 }
 .login-card h1 { margin: 0; font-size: 1.5rem; }
 .login-card .muted { margin: -0.5rem 0 0; }
+.login-card .button { text-align: center; }
 
 [hidden] { display: none !important; }

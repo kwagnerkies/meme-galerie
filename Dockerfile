@@ -11,7 +11,7 @@ RUN apk upgrade --no-cache \
  && mkdir -p /data/uploads && chown -R node:node /data
 
 WORKDIR /app
-COPY --chown=root:root package.json server.js image.js ./
+COPY --chown=root:root package.json server.js image.js oidc.js ./
 COPY --chown=root:root public ./public
 
 USER node
