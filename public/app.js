@@ -46,7 +46,19 @@ function render() {
     const caption = document.createElement('span');
     caption.className = 'caption';
     caption.textContent = meme.name;
-    card.append(img, caption);
+    const foot = document.createElement('span');
+    foot.className = 'card-foot';
+    foot.append(caption);
+    const count = (meme.comments || []).length;
+    if (count) {
+      // Eigenes Element, damit ein langer Name den Zähler nicht abschneidet
+      const badge = document.createElement('span');
+      badge.className = 'count';
+      badge.textContent = `💬 ${count}`;
+      badge.title = `${count} Kommentare`;
+      foot.append(badge);
+    }
+    card.append(img, foot);
     card.addEventListener('click', () => openView(meme));
     return card;
   }));
@@ -99,13 +111,19 @@ dropzone.addEventListener('drop', (e) => {
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
-  if (!uploadDialog.open && e.dataTransfer.files[0]) openUpload(e.dataTransfer.files[0]);
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  if (viewDialog.open) setCommentFile(file);
+  else if (!uploadDialog.open) openUpload(file);
 });
 
 // Strg+V mit Bild in der Zwischenablage
 document.addEventListener('paste', (e) => {
   const item = [...e.clipboardData.items].find((i) => i.type.startsWith('image/'));
-  if (item) openUpload(item.getAsFile());
+  if (!item) return;
+  // In der Detailansicht wird das Bild an den Kommentar gehängt
+  if (viewDialog.open) setCommentFile(item.getAsFile());
+  else openUpload(item.getAsFile());
 });
 
 $('upload-form').addEventListener('submit', async (e) => {
@@ -148,8 +166,71 @@ function openView(meme) {
   $('view-name').value = meme.name;
   $('view-download').href = `/uploads/${meme.file}`;
   $('view-download').download = meme.name + meme.file.slice(meme.file.lastIndexOf('.'));
+  resetCommentForm();
+  renderComments();
   viewDialog.showModal();
 }
+
+let commentFile = null;
+
+function setCommentFile(file) {
+  commentFile = file && file.type.startsWith('image/') ? file : null;
+  $('comment-attach').textContent = commentFile ? '📎 ✓' : '📎';
+  $('comment-attach').setAttribute('aria-label', commentFile ? 'Bild angehängt, anderes wählen' : 'Bild anhängen');
+}
+
+$('comment-attach').addEventListener('click', () => {
+  $('comment-file').value = ''; // sonst meldet der Browser dieselbe Datei kein zweites Mal
+  $('comment-file').click();
+});
+
+function resetCommentForm() {
+  $('comment-form').reset();
+  setCommentFile(null);
+}
+
+$('comment-file').addEventListener('change', (e) => setCommentFile(e.target.files[0]));
+
+function renderComments() {
+  $('comments').replaceChildren(...(current.comments || []).map((comment) => {
+    const li = document.createElement('li');
+    const time = document.createElement('time');
+    time.dateTime = comment.createdAt;
+    time.textContent = new Date(comment.createdAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+    li.append(time, comment.text);
+    if (comment.file) {
+      const img = document.createElement('img');
+      img.src = `/uploads/${comment.file}`;
+      img.alt = comment.text || 'Bild im Kommentar';
+      img.loading = 'lazy';
+      li.append(img);
+    }
+    return li;
+  }));
+  $('comments').scrollTop = $('comments').scrollHeight;
+}
+
+$('comment-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const meme = current; // Dialog kann während des Uploads zu einem anderen Meme wechseln
+  const submit = $('comment-submit');
+  submit.disabled = true;
+  try {
+    const headers = { 'X-Comment-Text': encodeURIComponent($('comment-text').value.trim()) };
+    if (commentFile) headers['Content-Type'] = commentFile.type;
+    const updated = await api(`/api/memes/${meme.id}/comments`, { method: 'POST', headers, body: commentFile });
+    Object.assign(meme, updated);
+    if (current === meme) {
+      resetCommentForm();
+      renderComments();
+    }
+    render();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
 
 $('rename-form').addEventListener('submit', async (e) => {
   e.preventDefault();
