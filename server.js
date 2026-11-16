@@ -23,7 +23,8 @@ const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 15) * 1024 * 1024;
 // Hinter dem mittwald-Proxy kommt die echte Client-IP aus X-Forwarded-For
 const TRUST_PROXY = process.env.TRUST_PROXY !== 'false';
 
-// OpenID Connect (e.g. Keycloak): enabled when OIDC_ISSUER is set. Password login is then disabled.
+// OpenID Connect (e.g. Keycloak): optional, enabled when OIDC_ISSUER is set. The password login
+// for the standard user stays available in addition.
 const OIDC_ISSUER = process.env.OIDC_ISSUER || '';
 const OIDC_CLIENT_ID = process.env.OIDC_CLIENT_ID || '';
 const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
@@ -43,9 +44,10 @@ const oidc = OIDC_ENABLED
   : null;
 const OIDC_PENDING_S = 10 * 60;
 
-// With OIDC a short session is enough: re-login is a single SSO redirect, and users removed
-// in the identity provider lose access soon.
-const SESSION_MS = (OIDC_ENABLED ? 12 : 30 * 24) * 60 * 60 * 1000;
+const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+// OIDC sessions are short: re-login is a single SSO redirect, and users removed in the
+// identity provider lose access soon.
+const OIDC_SESSION_MS = 12 * 60 * 60 * 1000;
 const MAX_NAME_LENGTH = 120;
 const MAX_COMMENT_LENGTH = 500;
 const MAX_COMMENTS = 200; // pro Meme, damit memes.json nicht unbegrenzt wächst
@@ -94,7 +96,7 @@ const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex'
 const sessionStore = readJson(SESSION_FILE, {});
 const credentialSalt = sessionStore.salt || crypto.randomBytes(16).toString('hex');
 // Switching login mode, issuer or client also logs out all devices
-const credentialInput = OIDC_ENABLED ? `oidc\n${OIDC_ISSUER}\n${OIDC_CLIENT_ID}` : `${USERNAME}\n${PASSWORD}`;
+const credentialInput = `${USERNAME}\n${PASSWORD}` + (OIDC_ENABLED ? `\noidc\n${OIDC_ISSUER}\n${OIDC_CLIENT_ID}` : '');
 const credentialHash = crypto.scryptSync(credentialInput, credentialSalt, 32).toString('hex');
 let sessions = sessionStore.credentialHash === credentialHash ? sessionStore.sessions || {} : {};
 
@@ -162,11 +164,11 @@ function oidcPendingCookie(req, value, maxAgeSeconds) {
   return `oidc_pending=${value}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
 }
 
-function createSession(req, res, user, extraCookies = []) {
+function createSession(req, res, user, lifetimeMs, extraCookies = []) {
   const token = crypto.randomBytes(32).toString('base64url');
-  sessions[sha256(token)] = { expires: Date.now() + SESSION_MS, user };
+  sessions[sha256(token)] = { expires: Date.now() + lifetimeMs, user };
   saveSessions();
-  return redirect(req, res, '/', { 'Set-Cookie': [sessionCookie(req, token, SESSION_MS / 1000), ...extraCookies] });
+  return redirect(req, res, '/', { 'Set-Cookie': [sessionCookie(req, token, lifetimeMs / 1000), ...extraCookies] });
 }
 
 function clientIp(req) {
@@ -318,11 +320,8 @@ async function handle(req, res) {
 
   if (pathname === '/login' && method === 'GET') {
     if (currentUser(req)) return redirect(req, res, '/');
-    if (!OIDC_ENABLED) return serveStatic(req, res, 'login.html');
-    // Bare /login goes straight to the identity provider. After an error or logout the page
-    // with the button is shown, otherwise SSO would log the user right back in.
-    if (!url.search) return redirect(req, res, '/auth/login');
-    return serveStatic(req, res, 'login-oidc.html');
+    // With OIDC the page additionally offers the button for the identity provider
+    return serveStatic(req, res, OIDC_ENABLED ? 'login-oidc.html' : 'login.html');
   }
 
   if (OIDC_ENABLED && pathname === '/auth/login' && method === 'GET') {
@@ -367,11 +366,10 @@ async function handle(req, res) {
       name: cleanName(claims.name || claims.preferred_username || claims.email || claims.sub, 100),
     };
     console.log(`OIDC-Login: ${user.name} (${user.id})`);
-    return createSession(req, res, user, [clear['Set-Cookie']]);
+    return createSession(req, res, user, OIDC_SESSION_MS, [clear['Set-Cookie']]);
   }
 
   if (pathname === '/login' && method === 'POST') {
-    if (OIDC_ENABLED) return send(req, res, 404, 'Nicht gefunden');
     const ip = clientIp(req);
     if (isBlocked(ip)) return redirect(req, res, '/login?error=blocked');
     const params = new URLSearchParams((await readBody(req, 4 * 1024)).toString());
@@ -384,7 +382,7 @@ async function handle(req, res) {
       return redirect(req, res, '/login?error=1');
     }
     failedLogins.delete(ip);
-    return createSession(req, res, PASSWORD_USER);
+    return createSession(req, res, PASSWORD_USER, SESSION_MS);
   }
 
   if (pathname === '/logout' && method === 'POST') {
@@ -393,7 +391,7 @@ async function handle(req, res) {
       delete sessions[id];
       saveSessions();
     }
-    return redirect(req, res, OIDC_ENABLED ? '/login?logout=1' : '/login', { 'Set-Cookie': sessionCookie(req, '', 0) });
+    return redirect(req, res, '/login', { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 
   // Login-Seite braucht CSS und JS ohne Anmeldung
@@ -538,9 +536,8 @@ server.keepAliveTimeout = 5 * 1000;
 
 server.listen(PORT, () => {
   console.log(`Meme-Galerie läuft auf Port ${PORT}, Daten in ${DATA_DIR}`);
-  if (OIDC_ENABLED) {
-    console.log(`Login per OIDC über ${OIDC_ISSUER}, Redirect-URI ${APP_URL}/auth/callback`);
-  } else if (PASSWORD === 'hosting' || PASSWORD.length < 12) {
+  if (OIDC_ENABLED) console.log(`Login zusätzlich per OIDC über ${OIDC_ISSUER}, Redirect-URI ${APP_URL}/auth/callback`);
+  if (PASSWORD === 'hosting' || PASSWORD.length < 12) {
     console.warn('WARNUNG: Schwaches Passwort. Für den Betrieb APP_PASSWORD auf ein langes, zufälliges Passwort setzen.');
   }
 });

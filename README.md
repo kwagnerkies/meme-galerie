@@ -8,7 +8,7 @@ Interne Galerie für Memes: Login, Bilder hochladen und benennen, Galerie mit Su
 - Klick auf ein Bild: groß ansehen, kommentieren, umbenennen, herunterladen, löschen
 - Kommentare (max. 500 Zeichen, 200 pro Meme) liegen mit in `memes.json`. Ein Kommentar kann ein Bild enthalten (📎, Strg+V oder Drag & Drop), es gelten dieselben Regeln wie beim Upload
 - Login wahlweise mit gemeinsamem Passwort oder per OpenID Connect (z. B. Keycloak), siehe [Login mit Keycloak](#login-mit-keycloak-oidc)
-- Bei jedem Meme steht, wer es hochgeladen hat, bei jedem Kommentar, wer ihn geschrieben hat. Eigene Kommentare kann man löschen (✕). Mit Passwort-Login teilen sich alle einen Benutzer, dann kann jeder jeden Kommentar löschen
+- Bei jedem Meme steht, wer es hochgeladen hat, bei jedem Kommentar, wer ihn geschrieben hat. Eigene Kommentare kann man löschen (✕). Wer sich mit dem Standard-User (Passwort) anmeldet, teilt sich diesen Benutzer mit allen anderen Passwort-Logins, deren Kommentare können also gegenseitig gelöscht werden
 
 ## Sicherheit
 
@@ -24,9 +24,9 @@ Interne Galerie für Memes: Login, Bilder hochladen und benennen, Galerie mit Su
 
 | Variable         | Standard  | Bedeutung                                                |
 |------------------|-----------|----------------------------------------------------------|
-| `APP_USERNAME`   | `cloud`   | Login-Benutzername (nur ohne OIDC)                       |
-| `APP_PASSWORD`   | `hosting` | Login-Passwort (nur ohne OIDC)                           |
-| `OIDC_ISSUER`    | –         | Issuer-URL, z. B. `https://sso.example.de/realms/firma`. Ist sie gesetzt, gilt nur noch OIDC-Login |
+| `APP_USERNAME`   | `cloud`   | Benutzername des Standard-Users                          |
+| `APP_PASSWORD`   | `hosting` | Passwort des Standard-Users                              |
+| `OIDC_ISSUER`    | –         | Issuer-URL, z. B. `https://sso.example.de/realms/firma`. Ist sie gesetzt, gibt es auf der Login-Seite zusätzlich „Mit Keycloak anmelden“ |
 | `OIDC_CLIENT_ID` | –         | Client-ID aus Keycloak                                   |
 | `OIDC_CLIENT_SECRET` | –     | Client-Secret (bei „Client authentication: On“)          |
 | `APP_URL`        | –         | Öffentliche URL der Galerie ohne `/` am Ende, z. B. `https://memes.example.de`. Daraus wird die Redirect-URI `<APP_URL>/auth/callback` |
@@ -50,8 +50,9 @@ Ein starkes Passwort erzeugen: `openssl rand -base64 24`
 
 Hinweise:
 
-- Mit OIDC ist der Passwort-Login abgeschaltet. Beim Umstellen werden alle bestehenden Sessions ungültig.
-- Eine Session gilt mit OIDC 12 Stunden, danach geht es per SSO-Redirect neu durch Keycloak. Wer in Keycloak gesperrt wird, verliert den Zugriff also spätestens nach 12 Stunden.
+- Der Login mit Standard-User und Passwort bleibt zusätzlich möglich. Wer ihn nicht braucht, sollte `APP_PASSWORD` trotzdem auf ein langes, zufälliges Passwort setzen.
+- Beim Ein- oder Umstellen von OIDC werden alle bestehenden Sessions ungültig.
+- Eine Session über Keycloak gilt 12 Stunden (mit Passwort weiterhin 30 Tage), danach geht es per SSO-Redirect neu durch Keycloak. Wer in Keycloak gesperrt wird, verliert den Zugriff also spätestens nach 12 Stunden.
 - Abmelden beendet nur die Session in der Galerie, nicht die Keycloak-Session.
 - Anmelden kann sich jeder Benutzer des Realms. Wer das einschränken will, macht das in Keycloak (z. B. eigener Realm oder ein Authentication-Flow, der eine Rolle prüft). Eine Rollenprüfung in der Galerie selbst gibt es noch nicht.
 - Als Name wird `name`, sonst `preferred_username`, sonst `email` aus dem ID-Token angezeigt. Ändert sich der Name in Keycloak, bleiben bereits gespeicherte Memes und Kommentare beim alten Namen.

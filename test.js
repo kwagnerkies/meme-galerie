@@ -124,6 +124,7 @@ test('OIDC-Login', async (t) => {
     env: {
       ...process.env, PORT: APP_PORT, DATA_DIR: dataDir, TRUST_PROXY: 'false',
       OIDC_ISSUER: issuer + '/', OIDC_CLIENT_ID: 'meme', OIDC_CLIENT_SECRET: 'geheim', APP_URL: app,
+      APP_USERNAME: 'u', APP_PASSWORD: 'p',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -157,11 +158,18 @@ test('OIDC-Login', async (t) => {
   }
   const isError = (res) => res.status === 303 && res.headers.get('location') === '/login?error=oidc';
 
-  // Bare /login redirects to the IdP, password login is disabled
-  assert.strictEqual((await get('/login')).headers.get('location'), '/auth/login');
-  assert.strictEqual((await get('/login?error=oidc')).status, 200);
-  const pw = await fetch(`${app}/login`, { method: 'POST', body: new URLSearchParams({ username: 'cloud', password: 'hosting' }), redirect: 'manual' });
-  assert.strictEqual(pw.status, 404);
+  // Login page offers both: Keycloak button and the password form for the standard user
+  const page = await get('/login');
+  assert.strictEqual(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /href="\/auth\/login"/);
+  assert.match(html, /name="password"/);
+  const pw = await fetch(`${app}/login`, { method: 'POST', body: new URLSearchParams({ username: 'u', password: 'p' }), redirect: 'manual' });
+  assert.strictEqual(pw.headers.get('location'), '/');
+  const pwSession = cookies(pw).find((c) => c.startsWith('session='));
+  assert.deepStrictEqual(await (await get('/api/me', pwSession)).json(), { id: 'local', name: 'u' });
+  const wrong = await fetch(`${app}/login`, { method: 'POST', body: new URLSearchParams({ username: 'u', password: 'x' }), redirect: 'manual' });
+  assert.strictEqual(wrong.headers.get('location'), '/login?error=1');
 
   // Happy path
   const ok = await login((a) => sign(claims(a)));
@@ -174,8 +182,7 @@ test('OIDC-Login', async (t) => {
 
   // Logout ends the session and lands on the page with the button
   const out = await fetch(`${app}/logout`, { method: 'POST', redirect: 'manual', headers: { Cookie: session } });
-  assert.strictEqual(out.headers.get('location'), '/login?logout=1');
-  assert.strictEqual((await get('/login?logout=1')).status, 200);
+  assert.strictEqual(out.headers.get('location'), '/login');
   assert.strictEqual((await get('/api/memes', session)).status, 401);
 
   // Uploader and comment authors come from the ID token; only authors can delete comments

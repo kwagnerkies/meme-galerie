@@ -1,13 +1,10 @@
-const params = new URLSearchParams(location.search);
 const MESSAGES = {
   blocked: 'Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.',
-  oidc: 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.',
+  oidc: 'Anmeldung über Keycloak fehlgeschlagen. Bitte erneut versuchen.',
 };
-const error = params.get('error');
+const error = new URLSearchParams(location.search).get('error');
 if (error) {
   const el = document.getElementById('error');
   el.textContent = MESSAGES[error] || 'Benutzername oder Passwort falsch.';
   el.hidden = false;
 }
-const info = document.getElementById('info');
-if (info && params.has('logout')) info.textContent = 'Du bist abgemeldet.';

@@ -7,12 +7,20 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="login-page">
-  <div class="login-card">
+  <form class="login-card" method="post" action="/login">
     <h1>Meme-Galerie</h1>
-    <p class="muted" id="info">Bitte anmelden</p>
+    <p class="muted">Bitte anmelden</p>
     <p class="error" id="error" hidden></p>
-    <a class="button primary" href="/auth/login">Anmelden</a>
-  </div>
+    <a class="button primary" href="/auth/login">Mit Keycloak anmelden</a>
+    <p class="divider muted">oder mit Benutzername und Passwort</p>
+    <label>Benutzername
+      <input name="username" autocomplete="username" required>
+    </label>
+    <label>Passwort
+      <input name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit" class="ghost">Anmelden</button>
+  </form>
   <script src="/login.js"></script>
 </body>
 </html>
