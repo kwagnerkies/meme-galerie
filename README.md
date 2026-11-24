@@ -9,6 +9,8 @@ Interne Galerie für Memes: Login, Bilder hochladen und benennen, Galerie mit Su
 - Kommentare (max. 500 Zeichen, 200 pro Meme) liegen mit in `memes.json`. Ein Kommentar kann ein Bild enthalten (📎, Strg+V oder Drag & Drop), es gelten dieselben Regeln wie beim Upload
 - Login wahlweise mit gemeinsamem Passwort oder per OpenID Connect (z. B. Keycloak), siehe [Login mit Keycloak](#login-mit-keycloak-oidc)
 - Bei jedem Meme steht, wer es hochgeladen hat, bei jedem Kommentar, wer ihn geschrieben hat. Eigene Kommentare kann man löschen (✕). Wer sich mit dem Standard-User (Passwort) anmeldet, teilt sich diesen Benutzer mit allen anderen Passwort-Logins, deren Kommentare können also gegenseitig gelöscht werden
+- Up- und Downvotes (▲/▼) an jedem Meme, in der Galerie und in der Detailansicht. Da sich Passwort-Logins einen Benutzer teilen, zählt die Stimme pro Browser: dieser bekommt eine zufällige Voter-ID im `localStorage`, die eigenen Stimmen werden dort zwischengespeichert und im Backend in `memes.json` abgelegt. Erneuter Klick nimmt die Stimme zurück. OIDC-Nutzer stimmen mit ihrem Account ab
+- Awards wie bei Reddit (Gold, Silber, Zum Totlachen, Feuer, Big Brain, Ich bin tot, Wholesome) mit eigenen SVG-Icons, ohne Coins: in der Detailansicht kann jeder Browser jeden Award einmal pro Meme vergeben und per Klick wieder zurücknehmen. Die Galerie zeigt die häufigsten Awards an der Karte. Gespeichert wird wie bei den Votes im `localStorage` und in `memes.json`, die Liste der Awards steht in `AWARDS` in `server.js`, die Icons als SVG-Sprite in `public/index.html`
 
 ## Sicherheit
 

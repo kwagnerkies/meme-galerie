@@ -63,6 +63,45 @@ test('Kommentare anlegen und begrenzen', async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.strictEqual(uploads(), before);
 
+  // Votes: per browser voter id, one vote each, changeable and removable
+  const voterA = { ...headers, 'X-Voter-Id': '11111111-1111-4111-8111-111111111111' };
+  const voterB = { ...headers, 'X-Voter-Id': '22222222-2222-4222-8222-222222222222' };
+  const vote = (h, v) => fetch(`${base}/api/memes/${meme.id}/vote`, { method: 'POST', headers: h, body: JSON.stringify({ vote: v }) });
+  let voted = await (await vote(voterA, 1)).json();
+  assert.deepStrictEqual([voted.up, voted.down, voted.score, voted.myVote], [1, 0, 1, 1]);
+  assert.strictEqual(voted.votes, undefined);
+  voted = await (await vote(voterA, 1)).json();
+  assert.strictEqual(voted.up, 1);
+  voted = await (await vote(voterB, -1)).json();
+  assert.deepStrictEqual([voted.up, voted.down, voted.score, voted.myVote], [1, 1, 0, -1]);
+  voted = await (await vote(voterA, -1)).json();
+  assert.deepStrictEqual([voted.up, voted.down, voted.score], [0, 2, -2]);
+  voted = await (await vote(voterB, 0)).json();
+  assert.deepStrictEqual([voted.down, voted.myVote], [1, 0]);
+  assert.strictEqual((await vote(headers, 1)).status, 400); // without voter id
+  assert.strictEqual((await vote(voterA, 5)).status, 400);
+  const listA = await (await fetch(`${base}/api/memes`, { headers: voterA })).json();
+  assert.deepStrictEqual([listA[0].myVote, listA[0].score], [-1, -1]);
+  const listB = await (await fetch(`${base}/api/memes`, { headers: voterB })).json();
+  assert.strictEqual(listB[0].myVote, 0);
+
+  // Awards: each voter gives each award once, can take it back
+  const types = await (await fetch(`${base}/api/awards`, { headers })).json();
+  assert.ok(types.some((a) => a.id === 'gold'));
+  const award = (h, a, given) => fetch(`${base}/api/memes/${meme.id}/awards`, { method: 'POST', headers: h, body: JSON.stringify({ award: a, given }) });
+  let awarded = await (await award(voterA, 'gold', true)).json();
+  awarded = await (await award(voterA, 'gold', true)).json();
+  awarded = await (await award(voterA, 'fire', true)).json();
+  assert.deepStrictEqual(awarded.awards, { gold: 1, fire: 1 });
+  assert.deepStrictEqual(awarded.myAwards, ['gold', 'fire']);
+  awarded = await (await award(voterB, 'gold', true)).json();
+  assert.deepStrictEqual([awarded.awards.gold, awarded.myAwards], [2, ['gold']]);
+  awarded = await (await award(voterA, 'fire', false)).json();
+  assert.deepStrictEqual([awarded.awards, awarded.myAwards], [{ gold: 2 }, ['gold']]);
+  assert.strictEqual((await award(voterA, 'platinum', true)).status, 400);
+  assert.strictEqual((await award(voterA, 'gold', 'yes')).status, 400);
+  assert.strictEqual((await award(headers, 'gold', true)).status, 400);
+
   // Meme löschen räumt auch die Kommentar-Bilder weg
   assert.strictEqual((await fetch(`${base}/api/memes/${meme.id}`, { method: 'DELETE', headers })).status, 204);
   await new Promise((resolve) => setTimeout(resolve, 100));
