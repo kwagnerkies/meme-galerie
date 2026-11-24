@@ -536,6 +536,12 @@ for (const dialog of [uploadDialog, viewDialog]) {
   });
 }
 
+// Opt in to the Flow UI; the server picks the page by this cookie
+$('switch-ui').addEventListener('click', () => {
+  document.cookie = `ui=flow; Path=/; Max-Age=${365 * 24 * 60 * 60}; SameSite=Lax`;
+  location.reload();
+});
+
 api('/api/me')
   .then((user) => { me = user; $('me').textContent = user.name; })
   .catch(() => {})

@@ -1,0 +1,21 @@
+{
+  "name": "meme-galerie-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.3.0",
+    "vite": "^8.3.8"
+  },
+  "dependencies": {
+    "@internationalized/date": "^3.12.4",
+    "@mittwald/flow-react-components": "^1.7.1",
+    "@mittwald/react-use-promise": "^4.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-hook-form": "^7.92.0"
+  }
+}

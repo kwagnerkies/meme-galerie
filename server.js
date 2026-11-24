@@ -16,6 +16,9 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const DB_FILE = path.join(DATA_DIR, 'memes.json');
 const SESSION_FILE = path.join(DATA_DIR, 'sessions.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+// Optional Flow UI (web/, built with `npm run build` there). Users opt in with the "ui=flow" cookie.
+const FLOW_DIR = path.join(__dirname, 'web', 'dist');
+const FLOW_INDEX = path.join(FLOW_DIR, 'index.html');
 
 const USERNAME = process.env.APP_USERNAME || 'cloud';
 const PASSWORD = process.env.APP_PASSWORD || 'hosting';
@@ -68,6 +71,9 @@ const AWARD_IDS = new Set(AWARDS.map((a) => a.id));
 
 const EXT_TO_MIME = Object.fromEntries(Object.entries(TYPES).map(([mime, t]) => [t.ext, mime]));
 const STATIC_MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
+const FLOW_ASSET_MIME = { ...STATIC_MIME, '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png' };
+// Flow (React Aria) sets inline style attributes and ships its own fonts
+const FLOW_CSP = "default-src 'none'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 // ---------- Datenhaltung ----------
 
@@ -283,6 +289,14 @@ function serveStatic(req, res, name) {
   serveFile(req, res, path.join(PUBLIC_DIR, path.basename(name)), { 'Content-Type': type, 'Cache-Control': 'no-cache' });
 }
 
+function wantsFlow(req) {
+  return parseCookies(req).ui === 'flow' && fs.existsSync(FLOW_INDEX);
+}
+
+function serveFlowIndex(req, res) {
+  serveFile(req, res, FLOW_INDEX, { 'Content-Type': STATIC_MIME['.html'], 'Cache-Control': 'no-cache', 'Content-Security-Policy': FLOW_CSP });
+}
+
 // Gegen CSRF: schreibende Anfragen müssen von der eigenen Seite kommen.
 function sameOrigin(req) {
   const site = req.headers['sec-fetch-site'];
@@ -359,6 +373,7 @@ async function handle(req, res) {
 
   if (pathname === '/login' && method === 'GET') {
     if (currentUser(req)) return redirect(req, res, '/');
+    if (wantsFlow(req)) return serveFlowIndex(req, res);
     // With OIDC the page additionally offers the button for the identity provider
     return serveStatic(req, res, OIDC_ENABLED ? 'login-oidc.html' : 'login.html');
   }
@@ -436,6 +451,15 @@ async function handle(req, res) {
   // Login-Seite braucht CSS und JS ohne Anmeldung
   if (pathname === '/style.css' || pathname === '/login.js') return serveStatic(req, res, pathname.slice(1));
 
+  // Flow UI bundle (also needed by its login page); hashed file names, so cache forever
+  if (pathname.startsWith('/flow/assets/') && method === 'GET') {
+    const file = pathname.slice('/flow/assets/'.length);
+    const type = FLOW_ASSET_MIME[path.extname(file)];
+    if (!type || !/^[A-Za-z0-9_.-]+$/.test(file)) return send(req, res, 404, 'Nicht gefunden');
+    return serveFile(req, res, path.join(FLOW_DIR, 'assets', file), { 'Content-Type': type, 'Cache-Control': 'public, max-age=31536000, immutable' });
+  }
+  if (pathname === '/api/login-config' && method === 'GET') return sendJson(req, res, 200, { oidc: OIDC_ENABLED });
+
   // Ab hier nur mit Login
   const user = currentUser(req);
   if (!user) {
@@ -443,7 +467,7 @@ async function handle(req, res) {
     return redirect(req, res, '/login');
   }
 
-  if (pathname === '/' && method === 'GET') return serveStatic(req, res, 'index.html');
+  if (pathname === '/' && method === 'GET') return wantsFlow(req) ? serveFlowIndex(req, res) : serveStatic(req, res, 'index.html');
   if (pathname === '/app.js' && method === 'GET') return serveStatic(req, res, 'app.js');
 
   if (pathname.startsWith('/uploads/') && method === 'GET') {

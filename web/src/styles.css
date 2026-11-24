@@ -1,0 +1,119 @@
+/* App shell after Flow's "Simple App" and "Focus Task" templates */
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.page {
+  min-height: 100dvh;
+  background: var(--texture--grain), var(--background-gradient--color);
+  background-blend-mode: overlay, normal;
+}
+
+.app {
+  /* Scopes the sticky header's z-index, so Flow's overlays (portalled to body) stay on top */
+  isolation: isolate;
+  --page-width: 1400px;
+  --header-ground: var(--elevation--color--200);
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-block: var(--size-px--m);
+  background-color: color-mix(in srgb, var(--header-ground) 40%, transparent);
+  backdrop-filter: blur(var(--blur));
+}
+
+.app-header-content,
+.app-content {
+  width: 100%;
+  max-width: var(--page-width);
+  margin-inline: auto;
+  padding-inline: var(--size-px--xl);
+  box-sizing: border-box;
+}
+
+.app-content {
+  padding-block: var(--size-px--s) var(--size-px--l);
+}
+
+.app-nav {
+  margin-inline-start: auto;
+}
+
+.wordmark {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.muted {
+  color: var(--content--color--200, inherit);
+  opacity: 0.8;
+}
+
+.focus-center {
+  width: 100%;
+  max-width: 28rem;
+}
+
+.focus-center .wordmark {
+  text-align: center;
+  font-size: 1.75rem;
+}
+
+.grow {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.score {
+  min-width: 2ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-preview {
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.detail-image {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin-inline: auto;
+  object-fit: contain;
+}
+
+.comment-image {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  margin-top: var(--size-px--xs);
+}
+
+@media (max-width: 768px) {
+  .app-header-content,
+  .app-content {
+    padding-inline: var(--size-px--m);
+  }
+}
+
+@media (prefers-contrast: more), (prefers-reduced-transparency) {
+  .app-header {
+    background-color: var(--header-ground);
+    backdrop-filter: none;
+  }
+}
