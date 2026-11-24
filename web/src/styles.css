@@ -19,7 +19,7 @@ body,
 .app {
   /* Scopes the sticky header's z-index, so Flow's overlays (portalled to body) stay on top */
   isolation: isolate;
-  --page-width: 1400px;
+  --page-width: 1700px;
   --header-ground: var(--elevation--color--200);
 }
 
