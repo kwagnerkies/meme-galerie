@@ -67,7 +67,15 @@
 
   <header class="topbar">
     <h1 class="logo">Meme-Galerie</h1>
-    <input id="search" type="search" placeholder="Memes nach Namen suchen …" autocomplete="off" aria-label="Suche">
+    <div class="filters">
+      <input id="search" type="search" placeholder="Memes nach Namen suchen …" autocomplete="off" aria-label="Suche">
+      <select id="sort" aria-label="Sortierung">
+        <option value="new">Neueste</option>
+        <option value="up">Meiste Upvotes</option>
+        <option value="score">Bester Score</option>
+        <option value="awards">Meiste Awards</option>
+      </select>
+    </div>
     <button id="open-upload" class="primary">+ Hochladen</button>
     <span id="me" class="muted me"></span>
     <form method="post" action="/logout">

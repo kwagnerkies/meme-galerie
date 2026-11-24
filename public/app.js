@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const gallery = $('gallery');
 const statusEl = $('status');
 const search = $('search');
+const sort = $('sort');
 const uploadDialog = $('upload-dialog');
 const viewDialog = $('view-dialog');
 
@@ -240,9 +241,20 @@ async function load() {
   render();
 }
 
+// Sort keys; ties (and the default) go by upload date, newest first
+const SORTS = {
+  new: () => 0,
+  up: (m) => m.up || 0,
+  score: (m) => m.score || 0,
+  awards: (m) => Object.values(m.awards || {}).reduce((sum, n) => sum + n, 0),
+};
+if (SORTS[storageGet('sort')]) sort.value = storageGet('sort');
+
 function render() {
   const q = search.value.trim().toLowerCase();
-  const list = q ? memes.filter((m) => m.name.toLowerCase().includes(q)) : memes;
+  const key = SORTS[sort.value] || SORTS.new;
+  const list = (q ? memes.filter((m) => m.name.toLowerCase().includes(q)) : [...memes])
+    .sort((a, b) => key(b) - key(a) || b.createdAt.localeCompare(a.createdAt));
 
   gallery.replaceChildren(...list.map((meme) => {
     // Vote buttons live in the card, so the card itself is no button (no nested buttons)
@@ -286,6 +298,10 @@ function render() {
 }
 
 search.addEventListener('input', render);
+sort.addEventListener('change', () => {
+  storageSet('sort', sort.value);
+  render();
+});
 
 // ---------- Upload ----------
 
