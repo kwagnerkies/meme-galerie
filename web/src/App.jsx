@@ -9,6 +9,7 @@ import {
   Flex,
   Heading,
   HeaderNavigation,
+  IconFeedback,
   IconImage,
   IconLogout,
   IconRefresh,
@@ -25,7 +26,8 @@ import {
   useNotificationController,
 } from '@mittwald/flow-react-components';
 import { api, jsonBody, switchUi, syncVoteCache } from './api.js';
-import { AwardSummary, VoteControl } from './Votes.jsx';
+import { VoteControl } from './Votes.jsx';
+import { memeStore, useMeme } from './memeStore.js';
 import UploadModal from './UploadModal.jsx';
 import MemeModal from './MemeModal.jsx';
 
@@ -37,20 +39,37 @@ async function logout() {
   location.assign('/login');
 }
 
-const awardTotal = (m) => Object.values(m.awards || {}).reduce((sum, n) => sum + n, 0);
-// Sorting functions get table rows; ties go by upload date, newest first
+// Sorting functions get table rows; votes are read live from the store.
+// Ties go by upload date, newest first.
+const live = (row) => memeStore.get(row.original.id) || row.original;
 const newest = (a, b) => b.createdAt.localeCompare(a.createdAt);
 const byNewest = (rowA, rowB) => newest(rowA.original, rowB.original);
 const sortBy = (key) => (rowA, rowB) => {
-  const a = rowA.original;
-  const b = rowB.original;
+  const a = live(rowA);
+  const b = live(rowB);
   return key(b) - key(a) || newest(a, b);
 };
+
+// Live part of a tile: subscribes to its meme, so a vote re-renders only this tile
+function TileFooter({ id, onVote }) {
+  const meme = useMeme(id);
+  if (!meme) return null;
+  return (
+    <Flex align="center" justify="space-between" gap="s" wrap="wrap">
+      <VoteControl meme={meme} onVote={onVote} />
+      {meme.comments?.length > 0 && (
+        <Flex align="center" gap="xs" className="muted" aria-label={`${meme.comments.length} Kommentare`}>
+          <IconFeedback size="s" />
+          <Text>{meme.comments.length}</Text>
+        </Flex>
+      )}
+    </Flex>
+  );
+}
 
 export default function App() {
   const [me, setMe] = useState(null);
   const [memes, setMemes] = useState(null);
-  const [awardTypes, setAwardTypes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [pastedFile, setPastedFile] = useState(null);
   const uploadModal = useModalController();
@@ -69,47 +88,33 @@ export default function App() {
   );
 
   useEffect(() => {
-    Promise.all([api('/api/me'), api('/api/awards'), api('/api/memes')])
-      .then(([user, types, list]) => {
+    Promise.all([api('/api/me'), api('/api/memes')])
+      .then(([user, list]) => {
         setMe(user);
-        setAwardTypes(types);
         syncVoteCache(list, { prune: true });
+        memeStore.setAll(list);
         setMemes(list);
       })
       .catch(showError);
   }, [showError]);
 
+  // Only a rename changes what the List itself shows and searches; everything else goes to the store
   const replaceMeme = useCallback((updated) => {
-    setMemes((list) => list.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)));
+    const renamed = updated.name !== undefined && updated.name !== memeStore.get(updated.id)?.name;
+    memeStore.set(updated);
+    if (renamed) setMemes((list) => list.map((m) => (m.id === updated.id ? memeStore.get(m.id) : m)));
   }, []);
 
   // Optimistic: show the new vote right away, roll back if the server refuses
   const vote = useCallback(
-    async (meme, value) => {
+    async ({ id }, value) => {
+      const meme = memeStore.get(id);
       const old = meme.myVote || 0;
       const up = (meme.up || 0) - (old > 0) + (value > 0);
       const down = (meme.down || 0) - (old < 0) + (value < 0);
       replaceMeme({ ...meme, up, down, score: up - down, myVote: value });
       try {
         const updated = await api(`/api/memes/${meme.id}/vote`, { method: 'POST', ...jsonBody({ vote: value }) });
-        syncVoteCache([updated]);
-        replaceMeme(updated);
-      } catch (err) {
-        replaceMeme(meme);
-        showError(err);
-      }
-    },
-    [replaceMeme, showError],
-  );
-
-  const award = useCallback(
-    async (meme, id, given) => {
-      const awards = { ...meme.awards, [id]: (meme.awards?.[id] || 0) + (given ? 1 : -1) };
-      if (awards[id] <= 0) delete awards[id];
-      const myAwards = given ? [...(meme.myAwards || []), id] : (meme.myAwards || []).filter((a) => a !== id);
-      replaceMeme({ ...meme, awards, myAwards });
-      try {
-        const updated = await api(`/api/memes/${meme.id}/awards`, { method: 'POST', ...jsonBody({ award: id, given }) });
         syncVoteCache([updated]);
         replaceMeme(updated);
       } catch (err) {
@@ -147,7 +152,7 @@ export default function App() {
     return () => document.removeEventListener('paste', onPaste);
   }, [memeModal, openUpload]);
 
-  const selected = memes?.find((m) => m.id === selectedId);
+  const selected = useMeme(selectedId);
 
   const emptyView = (
     <IllustratedMessage>
@@ -193,7 +198,8 @@ export default function App() {
               aria-label="Memes"
               getItemId={(m) => m.id}
               defaultViewMode="tiles"
-              batchSize={40}
+              batchSize={24}
+              infiniteScroll
               emptyView={emptyView}
               onAction={openMeme}
             >
@@ -213,28 +219,21 @@ export default function App() {
               />
               <MemeList.Sorting property="$up" name="Meiste Upvotes" customSortingFn={sortBy((m) => m.up || 0)} />
               <MemeList.Sorting property="$score" name="Bester Score" customSortingFn={sortBy((m) => m.score || 0)} />
-              <MemeList.Sorting property="$awards" name="Meiste Awards" customSortingFn={sortBy(awardTotal)} />
               <MemeList.Item
                 showTiles
                 showList={false}
+                tileMaxWidth={180}
                 textValue={(m) => m.name}
-                renderDependencies={[awardTypes, vote]}
+                renderDependencies={[vote]}
               >
                 {(meme) => (
-                  <MemeList.ItemView>
-                    <Avatar>
-                      <Image src={`/uploads/${meme.file}`} alt={meme.name} />
-                    </Avatar>
-                    <Heading>{meme.name}</Heading>
-                    <Text>{meme.uploadedBy ? `von ${meme.uploadedBy.name}` : ' '}</Text>
-                    <Content slot="bottom">
-                      <Flex align="center" justify="space-between" gap="s" wrap="wrap">
-                        <VoteControl meme={meme} onVote={vote} />
-                        <AwardSummary meme={meme} awardTypes={awardTypes} />
-                        {meme.comments?.length > 0 && <Text className="muted">💬 {meme.comments.length}</Text>}
-                      </Flex>
-                    </Content>
-                  </MemeList.ItemView>
+                  <div className="meme-tile" title={meme.uploadedBy ? `${meme.name} – von ${meme.uploadedBy.name}` : meme.name}>
+                    <Image src={`/uploads/${meme.file}`} alt={meme.name} aspectRatio={1} withRoundedCorners={false} loading="lazy" decoding="async" />
+                    <Flex direction="column" gap="xs" padding="s">
+                      <Text className="tile-name">{meme.name}</Text>
+                      <TileFooter id={meme.id} onVote={vote} />
+                    </Flex>
+                  </div>
                 )}
               </MemeList.Item>
             </MemeList.List>
@@ -245,17 +244,21 @@ export default function App() {
       <UploadModal
         controller={uploadModal}
         initialFile={pastedFile}
-        onUploaded={(meme) => setMemes((list) => [meme, ...list])}
+        onUploaded={(meme) => {
+          memeStore.set(meme);
+          setMemes((list) => [meme, ...list]);
+        }}
       />
       <MemeModal
         controller={memeModal}
         meme={selected}
         me={me}
-        awardTypes={awardTypes}
         onVote={vote}
-        onAward={award}
         onChanged={replaceMeme}
-        onDeleted={(id) => setMemes((list) => list.filter((m) => m.id !== id))}
+        onDeleted={(id) => {
+          setMemes((list) => list.filter((m) => m.id !== id));
+          memeStore.remove(id);
+        }}
         onError={showError}
       />
     </Flex>

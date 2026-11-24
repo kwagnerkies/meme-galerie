@@ -56,18 +56,6 @@ const MAX_COMMENT_LENGTH = 500;
 const MAX_COMMENTS = 200; // pro Meme, damit memes.json nicht unbegrenzt wächst
 const MAX_PARALLEL_UPLOADS = 4;
 const MAX_VOTES = 5000; // per meme, keeps memes.json bounded
-// Reddit-style awards without coins: every voter can give each award once per meme.
-// Each id needs a matching <symbol id="award-<id>"> icon in public/index.html.
-const AWARDS = [
-  { id: 'gold', name: 'Gold' },
-  { id: 'silver', name: 'Silber' },
-  { id: 'lol', name: 'Zum Totlachen' },
-  { id: 'fire', name: 'Feuer' },
-  { id: 'brain', name: 'Big Brain' },
-  { id: 'dead', name: 'Ich bin tot' },
-  { id: 'wholesome', name: 'Wholesome' },
-];
-const AWARD_IDS = new Set(AWARDS.map((a) => a.id));
 
 const EXT_TO_MIME = Object.fromEntries(Object.entries(TYPES).map(([mime, t]) => [t.ext, mime]));
 const STATIC_MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
@@ -326,19 +314,15 @@ function voterKey(req, user) {
 
 // API view of a meme: vote totals and the caller's own vote instead of the raw voter map
 function publicMeme(meme, key) {
-  const { votes = {}, awards: givenAwards = {}, ...rest } = meme;
-  // awards: { awardId: count } in AWARDS order, myAwards: the caller's own award ids
-  const counts = {};
-  for (const ids of Object.values(givenAwards)) for (const id of ids) counts[id] = (counts[id] || 0) + 1;
-  const awards = Object.fromEntries(AWARDS.filter((a) => counts[a.id]).map((a) => [a.id, counts[a.id]]));
-  const myAwards = (key && givenAwards[key]) || [];
+  // `awards` is left over from a removed feature in older memes.json files
+  const { votes = {}, awards: _removed, ...rest } = meme;
   let up = 0;
   let down = 0;
   for (const v of Object.values(votes)) {
     if (v > 0) up++;
     else down++;
   }
-  return { ...rest, up, down, score: up - down, myVote: (key && votes[key]) || 0, awards, myAwards };
+  return { ...rest, up, down, score: up - down, myVote: (key && votes[key]) || 0 };
 }
 
 // Liest ein Bild aus dem Request-Body, bereinigt und speichert es.
@@ -456,7 +440,16 @@ async function handle(req, res) {
     const file = pathname.slice('/flow/assets/'.length);
     const type = FLOW_ASSET_MIME[path.extname(file)];
     if (!type || !/^[A-Za-z0-9_.-]+$/.test(file)) return send(req, res, 404, 'Nicht gefunden');
-    return serveFile(req, res, path.join(FLOW_DIR, 'assets', file), { 'Content-Type': type, 'Cache-Control': 'public, max-age=31536000, immutable' });
+    const headers = { 'Content-Type': type, 'Cache-Control': 'public, max-age=31536000, immutable', Vary: 'Accept-Encoding' };
+    // Pre-compressed by the build (web/compress.mjs): the main bundle shrinks from ~1.7 MB to ~0.4 MB
+    const accepted = String(req.headers['accept-encoding'] || '');
+    for (const [encoding, ext] of [['br', '.br'], ['gzip', '.gz']]) {
+      const compressed = path.join(FLOW_DIR, 'assets', file + ext);
+      if (accepted.includes(encoding) && fs.existsSync(compressed)) {
+        return serveFile(req, res, compressed, { ...headers, 'Content-Encoding': encoding });
+      }
+    }
+    return serveFile(req, res, path.join(FLOW_DIR, 'assets', file), headers);
   }
   if (pathname === '/api/login-config' && method === 'GET') return sendJson(req, res, 200, { oidc: OIDC_ENABLED });
 
@@ -503,9 +496,7 @@ async function handle(req, res) {
     return sendJson(req, res, 201, publicMeme(meme, null));
   }
 
-  if (pathname === '/api/awards' && method === 'GET') return sendJson(req, res, 200, AWARDS);
-
-  const voteMatch = pathname.match(/^\/api\/memes\/([a-f0-9-]{36})\/(vote|awards)$/);
+  const voteMatch = pathname.match(/^\/api\/memes\/([a-f0-9-]{36})\/vote$/);
   if (voteMatch && method === 'POST') {
     const meme = memes.find((m) => m.id === voteMatch[1]);
     if (!meme) return sendJson(req, res, 404, { error: 'Meme nicht gefunden' });
@@ -519,29 +510,13 @@ async function handle(req, res) {
     }
     if (!memes.includes(meme)) return sendJson(req, res, 404, { error: 'Meme nicht gefunden' });
 
-    if (voteMatch[2] === 'vote') {
-      const vote = body.vote;
-      if (vote !== 1 && vote !== -1 && vote !== 0) return sendJson(req, res, 400, { error: 'Ungültige Stimme' });
-      meme.votes = meme.votes || {}; // older memes have no field yet
-      if (vote === 0) delete meme.votes[key];
-      else if (key in meme.votes || Object.keys(meme.votes).length < MAX_VOTES) meme.votes[key] = vote;
-      else return sendJson(req, res, 400, { error: 'Zu viele Stimmen an diesem Meme' });
-      if (!Object.keys(meme.votes).length) delete meme.votes;
-    } else {
-      // { award: 'gold', given: true|false }
-      const { award, given } = body;
-      if (!AWARD_IDS.has(award) || typeof given !== 'boolean') return sendJson(req, res, 400, { error: 'Ungültiger Award' });
-      meme.awards = meme.awards || {};
-      const mine = new Set(meme.awards[key] || []);
-      if (given) mine.add(award);
-      else mine.delete(award);
-      if (!(key in meme.awards) && mine.size && Object.keys(meme.awards).length >= MAX_VOTES) {
-        return sendJson(req, res, 400, { error: 'Zu viele Awards an diesem Meme' });
-      }
-      if (mine.size) meme.awards[key] = AWARDS.map((a) => a.id).filter((id) => mine.has(id));
-      else delete meme.awards[key];
-      if (!Object.keys(meme.awards).length) delete meme.awards;
-    }
+    const vote = body.vote;
+    if (vote !== 1 && vote !== -1 && vote !== 0) return sendJson(req, res, 400, { error: 'Ungültige Stimme' });
+    meme.votes = meme.votes || {}; // older memes have no field yet
+    if (vote === 0) delete meme.votes[key];
+    else if (key in meme.votes || Object.keys(meme.votes).length < MAX_VOTES) meme.votes[key] = vote;
+    else return sendJson(req, res, 400, { error: 'Zu viele Stimmen an diesem Meme' });
+    if (!Object.keys(meme.votes).length) delete meme.votes;
     saveDb();
     return sendJson(req, res, 200, publicMeme(meme, key));
   }

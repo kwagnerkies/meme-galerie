@@ -51,12 +51,13 @@ function readCache(key) {
     return {};
   }
 }
-// voteCache: { memeId: 1|-1 }, awardCache: { memeId: [awardId, …] }
+// voteCache: { memeId: 1|-1 }
 const voteCache = readCache('votes');
-const awardCache = readCache('awards');
-function saveVoteCache() {
-  storageSet('votes', JSON.stringify(voteCache));
-  storageSet('awards', JSON.stringify(awardCache));
+const saveVoteCache = () => storageSet('votes', JSON.stringify(voteCache));
+try {
+  localStorage.removeItem('awards'); // left over from the removed awards feature
+} catch {
+  // storage blocked
 }
 
 // Backend is authoritative; keep the cache in sync with what it reports
@@ -64,95 +65,10 @@ function syncVoteCache(list) {
   for (const meme of list) {
     if (meme.myVote) voteCache[meme.id] = meme.myVote;
     else delete voteCache[meme.id];
-    if (meme.myAwards && meme.myAwards.length) awardCache[meme.id] = meme.myAwards;
-    else delete awardCache[meme.id];
   }
   const ids = new Set(memes.map((m) => m.id));
-  for (const cache of [voteCache, awardCache]) {
-    for (const id of Object.keys(cache)) if (!ids.has(id)) delete cache[id];
-  }
+  for (const id of Object.keys(voteCache)) if (!ids.has(id)) delete voteCache[id];
   saveVoteCache();
-}
-
-// ---------- Awards ----------
-
-let awardTypes = []; // [{ id, name }] from /api/awards
-
-// Icon from the SVG sprite in index.html
-function awardIcon(id) {
-  const ns = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('class', 'award-icon');
-  svg.setAttribute('viewBox', '0 0 32 32');
-  svg.setAttribute('aria-hidden', 'true');
-  const use = document.createElementNS(ns, 'use');
-  use.setAttribute('href', `#award-${id}`);
-  svg.append(use);
-  return svg;
-}
-const awardType = (id) => awardTypes.find((a) => a.id === id);
-const myAwards = (meme) => awardCache[meme.id] || [];
-
-// Compact display for the gallery card: up to three icons plus the total
-function awardBadge(meme) {
-  const entries = Object.entries(meme.awards || {}).filter(([id]) => awardType(id));
-  if (!entries.length) return null;
-  const badge = document.createElement('span');
-  badge.className = 'award-badge';
-  const total = entries.reduce((sum, [, n]) => sum + n, 0);
-  const top = [...entries].sort((a, b) => b[1] - a[1]).slice(0, 3);
-  badge.append(...top.map(([id]) => awardIcon(id)));
-  if (total > 1) badge.append(String(total));
-  badge.title = entries.map(([id, n]) => `${awardType(id).name} ×${n}`).join(', ');
-  return badge;
-}
-
-// Detail view: one toggle button per award type
-function renderViewAwards() {
-  if (!current) return;
-  const meme = current;
-  const mine = myAwards(meme);
-  $('view-awards').replaceChildren(...awardTypes.map((a) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    const given = mine.includes(a.id);
-    const count = (meme.awards || {})[a.id] || 0;
-    b.className = 'award' + (given ? ' active' : '');
-    b.append(awardIcon(a.id));
-    if (count) b.append(String(count));
-    b.title = given ? `${a.name} – zurücknehmen` : `${a.name} vergeben`;
-    b.setAttribute('aria-label', b.title);
-    b.setAttribute('aria-pressed', String(given));
-    b.addEventListener('click', () => giveAward(meme, a.id, !given));
-    return b;
-  }));
-}
-
-async function giveAward(meme, award, given) {
-  // Optimistic like votes: update right away, roll back on error
-  const previous = { awards: { ...(meme.awards || {}) }, myAwards: myAwards(meme) };
-  const counts = { ...(meme.awards || {}) };
-  counts[award] = (counts[award] || 0) + (given ? 1 : -1);
-  if (counts[award] <= 0) delete counts[award];
-  meme.awards = counts;
-  meme.myAwards = given ? [...previous.myAwards, award] : previous.myAwards.filter((id) => id !== award);
-  syncVoteCache([meme]);
-  render();
-  if (current === meme) renderViewAwards();
-  try {
-    const updated = await api(`/api/memes/${meme.id}/awards`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ award, given }),
-    });
-    Object.assign(meme, updated);
-  } catch (err) {
-    Object.assign(meme, previous);
-    alert(err.message);
-  }
-  syncVoteCache([meme]);
-  render();
-  if (current === meme) renderViewAwards();
 }
 
 const myVote = (meme) => voteCache[meme.id] || 0;
@@ -246,7 +162,6 @@ const SORTS = {
   new: () => 0,
   up: (m) => m.up || 0,
   score: (m) => m.score || 0,
-  awards: (m) => Object.values(m.awards || {}).reduce((sum, n) => sum + n, 0),
 };
 if (SORTS[storageGet('sort')]) sort.value = storageGet('sort');
 
@@ -276,8 +191,6 @@ function render() {
     foot.className = 'card-foot';
     open.append(img, caption);
     foot.append(voteControl(meme));
-    const awards = awardBadge(meme);
-    if (awards) foot.append(awards);
     const count = (meme.comments || []).length;
     if (count) {
       // Eigenes Element, damit ein langer Name den Zähler nicht abschneidet
@@ -404,7 +317,6 @@ function openView(meme) {
   resetCommentForm();
   renderComments();
   renderViewVotes();
-  renderViewAwards();
   viewDialog.showModal();
 }
 
@@ -544,9 +456,6 @@ $('switch-ui').addEventListener('click', () => {
 
 api('/api/me')
   .then((user) => { me = user; $('me').textContent = user.name; })
-  .catch(() => {})
-  .then(() => api('/api/awards'))
-  .then((types) => { awardTypes = types; })
   .catch(() => {})
   .then(load)
   .catch((err) => { statusEl.textContent = err.message; });

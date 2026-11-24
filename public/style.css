@@ -156,26 +156,6 @@ main { padding: 1.25rem; max-width: 1400px; margin: 0 auto; }
 .vote.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .vote.active[aria-label="Downvote"] { background: var(--danger); border-color: var(--danger); }
 .score { min-width: 2ch; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
-/* Not display:none, otherwise the gradients inside the symbols are not rendered */
-.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
-.award-icon { width: 1.25em; height: 1.25em; flex: none; }
-.award-badge { display: inline-flex; align-items: center; gap: 0.1rem; font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
-.award-badge .award-icon { width: 1.15rem; height: 1.15rem; }
-.award-badge .award-icon + .award-icon { margin-left: -0.3rem; }
-.awards { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0 0 0.75rem; }
-.award {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.6rem;
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border);
-  border-radius: 999px;
-  font-size: 0.9rem;
-}
-.award:hover { border-color: var(--accent); }
-.award.active { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); }
 .view-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .count { font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
 .caption {

@@ -70,6 +70,7 @@ test('Kommentare anlegen und begrenzen', async (t) => {
   let voted = await (await vote(voterA, 1)).json();
   assert.deepStrictEqual([voted.up, voted.down, voted.score, voted.myVote], [1, 0, 1, 1]);
   assert.strictEqual(voted.votes, undefined);
+  assert.strictEqual(voted.awards, undefined);
   voted = await (await vote(voterA, 1)).json();
   assert.strictEqual(voted.up, 1);
   voted = await (await vote(voterB, -1)).json();
@@ -84,23 +85,6 @@ test('Kommentare anlegen und begrenzen', async (t) => {
   assert.deepStrictEqual([listA[0].myVote, listA[0].score], [-1, -1]);
   const listB = await (await fetch(`${base}/api/memes`, { headers: voterB })).json();
   assert.strictEqual(listB[0].myVote, 0);
-
-  // Awards: each voter gives each award once, can take it back
-  const types = await (await fetch(`${base}/api/awards`, { headers })).json();
-  assert.ok(types.some((a) => a.id === 'gold'));
-  const award = (h, a, given) => fetch(`${base}/api/memes/${meme.id}/awards`, { method: 'POST', headers: h, body: JSON.stringify({ award: a, given }) });
-  let awarded = await (await award(voterA, 'gold', true)).json();
-  awarded = await (await award(voterA, 'gold', true)).json();
-  awarded = await (await award(voterA, 'fire', true)).json();
-  assert.deepStrictEqual(awarded.awards, { gold: 1, fire: 1 });
-  assert.deepStrictEqual(awarded.myAwards, ['gold', 'fire']);
-  awarded = await (await award(voterB, 'gold', true)).json();
-  assert.deepStrictEqual([awarded.awards.gold, awarded.myAwards], [2, ['gold']]);
-  awarded = await (await award(voterA, 'fire', false)).json();
-  assert.deepStrictEqual([awarded.awards, awarded.myAwards], [{ gold: 2 }, ['gold']]);
-  assert.strictEqual((await award(voterA, 'platinum', true)).status, 400);
-  assert.strictEqual((await award(voterA, 'gold', 'yes')).status, 400);
-  assert.strictEqual((await award(headers, 'gold', true)).status, 400);
 
   // Meme löschen räumt auch die Kommentar-Bilder weg
   assert.strictEqual((await fetch(`${base}/api/memes/${meme.id}`, { method: 'DELETE', headers })).status, 204);

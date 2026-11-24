@@ -4,51 +4,57 @@ import {
   ActionGroup,
   Button,
   Content,
+  ContextMenu,
+  ContextMenuTrigger,
   FileField,
   Flex,
-  Header,
   Heading,
   IconAttachment,
+  IconContextMenu,
   IconDelete,
+  IconDownload,
+  IconEdit,
+  IconFeedback,
   IconSend,
   Image,
   Label,
-  Link,
-  Message,
-  MessageThread,
+  MenuItem,
   Modal,
-  ModalTrigger,
-  Section,
   Text,
   TextField,
+  useModalController,
 } from '@mittwald/flow-react-components';
 import { api, formatDate, jsonBody } from './api.js';
-import { AwardPicker, VoteControl } from './Votes.jsx';
+import { VoteControl } from './Votes.jsx';
 
 const ACCEPT = 'image/jpeg,image/png,image/gif,image/webp';
 
+function download(meme) {
+  const a = document.createElement('a');
+  a.href = `/uploads/${meme.file}`;
+  a.download = meme.name + meme.file.slice(meme.file.lastIndexOf('.'));
+  a.click();
+}
+
+// Reddit-like comment: author and time in one small line, text below, no chat bubbles
 function Comment({ comment, me, onDelete }) {
   const own = me && comment.author && comment.author.id === me.id;
   return (
-    <Message type={own ? 'sender' : 'responder'}>
-      <Header>
-        <Text>
-          <strong>{comment.author ? comment.author.name : 'Unbekannt'}</strong>
-        </Text>
-        <Text>{formatDate(comment.createdAt)}</Text>
+    <li className="comment">
+      <Flex align="center" gap="s">
+        <Text className="comment-author">{comment.author ? comment.author.name : 'Unbekannt'}</Text>
+        <Text className="muted comment-time">{formatDate(comment.createdAt)}</Text>
         {own && (
           <Button size="s" variant="plain" color="secondary" aria-label="Kommentar löschen" onPress={() => onDelete(comment)}>
             <IconDelete />
           </Button>
         )}
-      </Header>
-      <Content>
-        {comment.text && <Text>{comment.text}</Text>}
-        {comment.file && (
-          <Image src={`/uploads/${comment.file}`} alt={comment.text || 'Bild im Kommentar'} withRoundedCorners className="comment-image" />
-        )}
-      </Content>
-    </Message>
+      </Flex>
+      {comment.text && <Text elementType="p">{comment.text}</Text>}
+      {comment.file && (
+        <Image src={`/uploads/${comment.file}`} alt={comment.text || 'Bild im Kommentar'} className="comment-image" loading="lazy" />
+      )}
+    </li>
   );
 }
 
@@ -76,12 +82,14 @@ function CommentForm({ meme, onChanged, onError }) {
 
   return (
     <form onSubmit={submit}>
-      <Flex align="end" gap="s" wrap="wrap">
-        <TextField value={text} onChange={setText} maxLength={500} className="grow">
-          <Label>Kommentar</Label>
-        </TextField>
+      <Flex align="center" gap="s">
+        <TextField value={text} onChange={setText} maxLength={500} aria-label="Kommentar" placeholder="Kommentar schreiben …" className="grow" />
         <FileField accept={ACCEPT} onChange={(files) => setFile(files?.[0] || null)}>
-          <Button variant={file ? 'soft' : 'outline'} color={file ? 'primary' : 'secondary'} aria-label={file ? `Bild angehängt: ${file.name}` : 'Bild anhängen'}>
+          <Button
+            variant={file ? 'soft' : 'plain'}
+            color={file ? 'primary' : 'secondary'}
+            aria-label={file ? `Bild angehängt: ${file.name}` : 'Bild anhängen'}
+          >
             <IconAttachment />
           </Button>
         </FileField>
@@ -89,44 +97,67 @@ function CommentForm({ meme, onChanged, onError }) {
           <IconSend />
         </Button>
       </Flex>
-      {file && <Text className="muted">Angehängt: {file.name}</Text>}
     </form>
   );
 }
 
-function RenameForm({ meme, onChanged, onError }) {
+function RenameModal({ controller, meme, onChanged, onError }) {
   const [name, setName] = useState(meme.name);
-  const [pending, setPending] = useState(false);
 
-  const submit = async (e) => {
-    e.preventDefault();
-    setPending(true);
+  const save = async () => {
     try {
       onChanged(await api(`/api/memes/${meme.id}`, { method: 'PATCH', ...jsonBody({ name }) }));
     } catch (err) {
       onError(err);
-    } finally {
-      setPending(false);
     }
   };
 
   return (
-    <form onSubmit={submit}>
-      <Flex align="end" gap="s">
-        <TextField value={name} onChange={setName} maxLength={120} isRequired className="grow">
+    <Modal controller={controller} size="s">
+      <Heading>Meme umbenennen</Heading>
+      <Content>
+        <TextField value={name} onChange={setName} maxLength={120} isRequired autoFocus>
           <Label>Name</Label>
         </TextField>
-        <Button type="submit" variant="soft" color="secondary" isPending={pending} isDisabled={name.trim() === meme.name}>
-          Umbenennen
-        </Button>
-      </Flex>
-    </form>
+      </Content>
+      <ActionGroup>
+        <Action closeModal onAction={save}>
+          <Button isDisabled={!name.trim() || name.trim() === meme.name}>Speichern</Button>
+        </Action>
+        <Action closeModal>
+          <Button variant="soft" color="secondary">
+            Abbrechen
+          </Button>
+        </Action>
+      </ActionGroup>
+    </Modal>
   );
 }
 
-function DetailContent({ meme, me, awardTypes, onVote, onAward, onChanged, onError }) {
-  const date = formatDate(meme.createdAt);
-  const meta = meme.uploadedBy ? `Hochgeladen von ${meme.uploadedBy.name} am ${date}` : `Hochgeladen am ${date}`;
+function DeleteModal({ controller, meme, onConfirm }) {
+  return (
+    <Modal controller={controller} size="s">
+      <Heading>Meme löschen?</Heading>
+      <Content>
+        <Text>„{meme.name}“ wird mit allen Kommentaren gelöscht. Das lässt sich nicht rückgängig machen.</Text>
+      </Content>
+      <ActionGroup>
+        <Action closeModal onAction={onConfirm}>
+          <Button color="danger">Löschen</Button>
+        </Action>
+        <Action closeModal>
+          <Button variant="soft" color="secondary">
+            Abbrechen
+          </Button>
+        </Action>
+      </ActionGroup>
+    </Modal>
+  );
+}
+
+function Post({ meme, me, onVote, onChanged, onError, onRename, onDelete }) {
+  const count = meme.comments?.length || 0;
+  const by = meme.uploadedBy ? `${meme.uploadedBy.name} · ` : '';
 
   const deleteComment = async (comment) => {
     try {
@@ -137,38 +168,61 @@ function DetailContent({ meme, me, awardTypes, onVote, onAward, onChanged, onErr
   };
 
   return (
-    <>
-      <Section>
-        <Image src={`/uploads/${meme.file}`} alt={meme.name} withRoundedCorners className="detail-image" />
-        <Flex align="center" justify="space-between" wrap="wrap" gap="m">
-          <Text className="muted">{meta}</Text>
-          <VoteControl meme={meme} onVote={onVote} />
+    <Flex direction="column" gap="m">
+      <Text className="muted post-meta">
+        {by}
+        {formatDate(meme.createdAt)}
+      </Text>
+
+      <div className="post-image">
+        <Image src={`/uploads/${meme.file}`} alt={meme.name} withRoundedCorners={false} />
+      </div>
+
+      <Flex align="center" gap="s" wrap="wrap">
+        <VoteControl meme={meme} onVote={onVote} />
+        <Flex align="center" gap="xs" className="muted">
+          <IconFeedback size="s" />
+          <Text>{count === 1 ? '1 Kommentar' : `${count} Kommentare`}</Text>
         </Flex>
-        <AwardPicker meme={meme} awardTypes={awardTypes} onAward={onAward} />
-      </Section>
-      <Section>
-        <Heading>Kommentare</Heading>
-        {meme.comments?.length ? (
-          <MessageThread>
-            {meme.comments.map((c) => (
-              <Comment key={c.id} comment={c} me={me} onDelete={deleteComment} />
-            ))}
-          </MessageThread>
-        ) : (
-          <Text className="muted">Noch keine Kommentare.</Text>
-        )}
-        <CommentForm meme={meme} onChanged={onChanged} onError={onError} />
-      </Section>
-      <Section>
-        <Heading>Bearbeiten</Heading>
-        <RenameForm key={meme.id + meme.name} meme={meme} onChanged={onChanged} onError={onError} />
-      </Section>
-    </>
+        <Flex grow />
+        <Button size="s" variant="plain" color="secondary" aria-label="Herunterladen" onPress={() => download(meme)}>
+          <IconDownload />
+        </Button>
+        <ContextMenuTrigger>
+          <Button size="s" variant="plain" color="secondary" aria-label="Weitere Aktionen">
+            <IconContextMenu />
+          </Button>
+          <ContextMenu>
+            <MenuItem onAction={onRename}>
+              <IconEdit />
+              <Text>Umbenennen</Text>
+            </MenuItem>
+            <MenuItem onAction={onDelete}>
+              <IconDelete />
+              <Text>Löschen</Text>
+            </MenuItem>
+          </ContextMenu>
+        </ContextMenuTrigger>
+      </Flex>
+
+      <CommentForm meme={meme} onChanged={onChanged} onError={onError} />
+      {count > 0 && (
+        <ul className="comments">
+          {meme.comments.map((c) => (
+            <Comment key={c.id} comment={c} me={me} onDelete={deleteComment} />
+          ))}
+        </ul>
+      )}
+
+    </Flex>
   );
 }
 
+// Rename and delete dialogs sit next to the detail modal, not inside it: a Modal nested in another
+// Modal's content made every click into the detail modal count as "outside" and close it.
 export default function MemeModal({ controller, meme, onDeleted, onError, ...props }) {
-  const download = meme && meme.name + meme.file.slice(meme.file.lastIndexOf('.'));
+  const renameModal = useModalController();
+  const deleteModal = useModalController();
 
   const remove = async () => {
     try {
@@ -181,42 +235,17 @@ export default function MemeModal({ controller, meme, onDeleted, onError, ...pro
   };
 
   return (
-    <Modal controller={controller} size="l">
-      <Heading>{meme?.name}</Heading>
-      <Content>{meme && <DetailContent meme={meme} onError={onError} {...props} />}</Content>
-      <ActionGroup>
-        <Link href={meme ? `/uploads/${meme.file}` : undefined} download={download}>
-          Herunterladen
-        </Link>
-        <ModalTrigger>
-          <Button color="danger" variant="soft">
-            Löschen
-          </Button>
-          <Modal size="s">
-            <Heading>Meme löschen?</Heading>
-            <Content>
-              <Text>
-                „{meme?.name}“ wird mit allen Kommentaren gelöscht. Das lässt sich nicht rückgängig machen.
-              </Text>
-            </Content>
-            <ActionGroup>
-              <Action closeModal onAction={remove}>
-                <Button color="danger">Löschen</Button>
-              </Action>
-              <Action closeModal>
-                <Button variant="soft" color="secondary">
-                  Abbrechen
-                </Button>
-              </Action>
-            </ActionGroup>
-          </Modal>
-        </ModalTrigger>
-        <Action closeModal>
-          <Button variant="soft" color="secondary">
-            Schließen
-          </Button>
-        </Action>
-      </ActionGroup>
-    </Modal>
+    <>
+      <Modal controller={controller} size="s" showCloseButton>
+        <Heading>{meme?.name}</Heading>
+        <Content>
+          {meme && (
+            <Post meme={meme} onError={onError} onRename={() => renameModal.open()} onDelete={() => deleteModal.open()} {...props} />
+          )}
+        </Content>
+      </Modal>
+      {meme && <RenameModal key={meme.id + meme.name} controller={renameModal} meme={meme} onChanged={props.onChanged} onError={onError} />}
+      {meme && <DeleteModal controller={deleteModal} meme={meme} onConfirm={remove} />}
+    </>
   );
 }

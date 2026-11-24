@@ -43,26 +43,25 @@ function readCache(key) {
   }
 }
 
-// voteCache: { memeId: 1|-1 }, awardCache: { memeId: [awardId, …] }
+// voteCache: { memeId: 1|-1 }
 const voteCache = readCache('votes');
-const awardCache = readCache('awards');
+try {
+  localStorage.removeItem('awards'); // left over from the removed awards feature
+} catch {
+  // storage blocked
+}
 
 // Backend is authoritative; mirror what it reports into the cache
 export function syncVoteCache(memes, { prune = false } = {}) {
   for (const meme of memes) {
     if (meme.myVote) voteCache[meme.id] = meme.myVote;
     else delete voteCache[meme.id];
-    if (meme.myAwards?.length) awardCache[meme.id] = meme.myAwards;
-    else delete awardCache[meme.id];
   }
   if (prune) {
     const ids = new Set(memes.map((m) => m.id));
-    for (const cache of [voteCache, awardCache]) {
-      for (const id of Object.keys(cache)) if (!ids.has(id)) delete cache[id];
-    }
+    for (const id of Object.keys(voteCache)) if (!ids.has(id)) delete voteCache[id];
   }
   storageSet('votes', JSON.stringify(voteCache));
-  storageSet('awards', JSON.stringify(awardCache));
 }
 
 export async function api(url, options = {}) {
