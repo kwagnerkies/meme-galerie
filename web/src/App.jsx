@@ -222,7 +222,7 @@ export default function App() {
               <MemeList.Item
                 showTiles
                 showList={false}
-                tileMaxWidth={180}
+                tileMaxWidth={220}
                 textValue={(m) => m.name}
                 renderDependencies={[vote]}
               >

@@ -19,7 +19,8 @@ body,
 .app {
   /* Scopes the sticky header's z-index, so Flow's overlays (portalled to body) stay on top */
   isolation: isolate;
-  --page-width: 1700px;
+  /* Same gallery width as the classic UI: its grid is at most 1360px, the LayoutCard adds its padding */
+  --page-width: 1442px;
   --header-ground: var(--elevation--color--200);
 }
 
@@ -37,7 +38,7 @@ body,
   width: 100%;
   max-width: var(--page-width);
   margin-inline: auto;
-  padding-inline: var(--size-px--xl);
+  padding-inline: var(--size-px--m);
   box-sizing: border-box;
 }
 
