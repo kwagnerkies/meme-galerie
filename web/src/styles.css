@@ -172,3 +172,56 @@ body,
   white-space: nowrap;
   font-weight: 600;
 }
+
+.upload-video {
+  display: block;
+  max-width: 100%;
+  margin-inline: auto;
+  border-radius: var(--list-item--corner-radius);
+}
+
+/* Video in the detail view: loops, click toggles the sound */
+.video-wrap {
+  position: relative;
+}
+
+.video-wrap video {
+  display: block;
+  max-width: 100%;
+  max-height: min(50vh, 480px);
+  cursor: pointer;
+}
+
+.sound-hint,
+.video-badge {
+  position: absolute;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+
+.sound-hint {
+  bottom: 0.6rem;
+  right: 0.6rem;
+}
+
+.tile-media {
+  position: relative;
+}
+
+.video-badge {
+  top: 0.5rem;
+  right: 0.5rem;
+}
+
+.changelog-entry + .changelog-entry {
+  margin-top: var(--size-px--m);
+}
+
+.changelog-entry ul {
+  margin: var(--size-px--xs) 0 0;
+  padding-left: 1.25rem;
+}

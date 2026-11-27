@@ -6,6 +6,12 @@ const search = $('search');
 const sort = $('sort');
 const uploadDialog = $('upload-dialog');
 const viewDialog = $('view-dialog');
+const changelogDialog = $('changelog-dialog');
+const viewVideo = $('view-video');
+
+const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
+const isVideoFile = (file) => VIDEO_TYPES.includes(file.type);
+const isVideo = (meme) => meme.file.endsWith('.mp4');
 
 let memes = [];
 let selectedFile = null;
@@ -179,8 +185,9 @@ function render() {
     open.type = 'button';
     open.className = 'card-open';
     open.title = meme.name;
+    // Videos show their poster frame in the gallery, playing starts in the detail view
     const img = document.createElement('img');
-    img.src = `/uploads/${meme.file}`;
+    img.src = `/uploads/${meme.poster || meme.file}`;
     img.alt = meme.name;
     img.loading = 'lazy';
     const caption = document.createElement('span');
@@ -190,6 +197,13 @@ function render() {
     const foot = document.createElement('span');
     foot.className = 'card-foot';
     open.append(img, caption);
+    if (isVideo(meme)) {
+      const badge = document.createElement('span');
+      badge.className = 'video-badge';
+      badge.textContent = '▶';
+      badge.setAttribute('aria-label', 'Video');
+      open.append(badge);
+    }
     foot.append(voteControl(meme));
     const count = (meme.comments || []).length;
     if (count) {
@@ -218,13 +232,23 @@ sort.addEventListener('change', () => {
 
 // ---------- Upload ----------
 
+function clearPreview() {
+  for (const el of [$('preview'), $('preview-video')]) {
+    if (el.src) URL.revokeObjectURL(el.src);
+    el.removeAttribute('src');
+    el.hidden = true;
+  }
+  $('preview-video').load(); // stops a playing preview
+}
+
 function setFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
+  if (!file || !(file.type.startsWith('image/') || isVideoFile(file))) return;
   selectedFile = file;
-  const preview = $('preview');
-  if (preview.src) URL.revokeObjectURL(preview.src);
+  clearPreview();
+  const preview = isVideoFile(file) ? $('preview-video') : $('preview');
   preview.src = URL.createObjectURL(file);
   preview.hidden = false;
+  if (preview.play) preview.play().catch(() => {});
   $('drop-hint').hidden = true;
   const nameInput = $('name');
   if (!nameInput.value) nameInput.value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
@@ -234,7 +258,7 @@ function setFile(file) {
 function openUpload(file) {
   $('upload-form').reset();
   selectedFile = null;
-  $('preview').hidden = true;
+  clearPreview();
   $('drop-hint').hidden = false;
   $('upload-error').hidden = true;
   if (!uploadDialog.open) uploadDialog.showModal();
@@ -277,13 +301,14 @@ $('upload-form').addEventListener('submit', async (e) => {
   const errorEl = $('upload-error');
   errorEl.hidden = true;
   if (!selectedFile) {
-    errorEl.textContent = 'Bitte ein Bild auswählen.';
+    errorEl.textContent = 'Bitte ein Bild oder Video auswählen.';
     errorEl.hidden = false;
     return;
   }
   const submit = $('upload-submit');
   submit.disabled = true;
-  submit.textContent = 'Lädt hoch …';
+  // Videos are shrunk on the server, that takes a moment
+  submit.textContent = isVideoFile(selectedFile) ? 'Lädt hoch und verkleinert …' : 'Lädt hoch …';
   try {
     const name = encodeURIComponent($('name').value.trim());
     const meme = await api(`/api/memes?name=${name}`, {
@@ -305,9 +330,36 @@ $('upload-form').addEventListener('submit', async (e) => {
 
 // ---------- Detailansicht ----------
 
+// Videos loop without controls; sound only after a click
+function setMuted(muted) {
+  viewVideo.muted = muted;
+  $('view-sound').textContent = muted ? '🔇 Klicken für Ton' : '🔊';
+}
+
+viewVideo.addEventListener('click', () => setMuted(!viewVideo.muted));
+
+function stopVideo() {
+  viewVideo.pause();
+  viewVideo.removeAttribute('src');
+  viewVideo.load();
+}
+
 function openView(meme) {
   current = meme;
-  $('view-img').src = `/uploads/${meme.file}`;
+  const video = isVideo(meme);
+  $('view-img').hidden = video;
+  $('view-video-wrap').hidden = !video;
+  if (video) {
+    $('view-img').removeAttribute('src');
+    setMuted(true);
+    viewVideo.poster = meme.poster ? `/uploads/${meme.poster}` : '';
+    viewVideo.src = `/uploads/${meme.file}`;
+    viewVideo.setAttribute('aria-label', `${meme.name} (Video, Klicken für Ton)`);
+    viewVideo.play().catch(() => {});
+  } else {
+    stopVideo();
+    $('view-img').src = `/uploads/${meme.file}`;
+  }
   $('view-img').alt = meme.name;
   $('view-name').value = meme.name;
   const date = new Date(meme.createdAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
@@ -439,8 +491,43 @@ $('view-delete').addEventListener('click', async () => {
   }
 });
 
+viewDialog.addEventListener('close', stopVideo);
+uploadDialog.addEventListener('close', clearPreview);
+
+// ---------- Changelog ----------
+
+// Pops up once per new entry: the browser remembers the date of the newest entry it has shown
+async function showChangelog({ onlyIfNew = false } = {}) {
+  const box = $('changelog');
+  try {
+    const entries = await api('/api/changelog');
+    const newest = entries[0] && entries[0].date;
+    if (onlyIfNew && (!newest || storageGet('changelogSeen') >= newest)) return;
+    if (newest) storageSet('changelogSeen', newest);
+    box.replaceChildren(...entries.map((entry) => {
+      const section = document.createElement('section');
+      const h = document.createElement('h3');
+      h.textContent = new Date(entry.date).toLocaleDateString('de-DE', { dateStyle: 'long' });
+      const ul = document.createElement('ul');
+      for (const item of entry.items) {
+        const li = document.createElement('li');
+        li.textContent = item;
+        ul.append(li);
+      }
+      section.append(h, ul);
+      return section;
+    }));
+  } catch (err) {
+    if (onlyIfNew) return;
+    box.textContent = err.message;
+  }
+  if (!changelogDialog.open && !uploadDialog.open && !viewDialog.open) changelogDialog.showModal();
+}
+
+$('open-changelog').addEventListener('click', () => showChangelog());
+
 // Dialoge schließen: Button oder Klick auf den Hintergrund
-for (const dialog of [uploadDialog, viewDialog]) {
+for (const dialog of [uploadDialog, viewDialog, changelogDialog]) {
   dialog.addEventListener('click', (e) => {
     const r = dialog.getBoundingClientRect();
     const outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
@@ -458,4 +545,5 @@ api('/api/me')
   .then((user) => { me = user; $('me').textContent = user.name; })
   .catch(() => {})
   .then(load)
+  .then(() => showChangelog({ onlyIfNew: true }))
   .catch((err) => { statusEl.textContent = err.message; });

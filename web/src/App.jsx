@@ -11,6 +11,7 @@ import {
   HeaderNavigation,
   IconFeedback,
   IconImage,
+  IconInfo,
   IconLogout,
   IconRefresh,
   Initials,
@@ -19,19 +20,43 @@ import {
   Image,
   LayoutCard,
   MenuItem,
+  Modal,
   Notification,
   Text,
   typedList,
   useModalController,
   useNotificationController,
 } from '@mittwald/flow-react-components';
-import { api, jsonBody, switchUi, syncVoteCache } from './api.js';
+import { api, jsonBody, storageGet, storageSet, switchUi, syncVoteCache } from './api.js';
 import { VoteControl } from './Votes.jsx';
 import { memeStore, useMeme } from './memeStore.js';
 import UploadModal from './UploadModal.jsx';
 import MemeModal from './MemeModal.jsx';
 
 const MemeList = typedList();
+
+function ChangelogModal({ controller, entries }) {
+  return (
+    <Modal controller={controller} size="s" showCloseButton>
+      <Heading>Neuigkeiten</Heading>
+      <Content>
+        {!entries && <Text>Lädt …</Text>}
+        {entries?.map((entry) => (
+          <section key={entry.date} className="changelog-entry">
+            <Heading level={3}>{new Date(entry.date).toLocaleDateString('de-DE', { dateStyle: 'long' })}</Heading>
+            <ul>
+              {entry.items.map((item) => (
+                <li key={item}>
+                  <Text>{item}</Text>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </Content>
+    </Modal>
+  );
+}
 
 // Same as the classic UI's logout form: the server drops the session and redirects to /login
 async function logout() {
@@ -74,6 +99,8 @@ export default function App() {
   const [pastedFile, setPastedFile] = useState(null);
   const uploadModal = useModalController();
   const memeModal = useModalController();
+  const changelogModal = useModalController();
+  const [changelog, setChangelog] = useState(null);
   const notifications = useNotificationController();
 
   const showError = useCallback(
@@ -154,6 +181,25 @@ export default function App() {
 
   const selected = useMeme(selectedId);
 
+  const openChangelog = () => {
+    changelogModal.open();
+    if (!changelog) api('/api/changelog').then(setChangelog).catch(showError);
+  };
+
+  // Pops up once per new entry: the browser remembers the date of the newest entry it has shown
+  useEffect(() => {
+    api('/api/changelog')
+      .then((entries) => {
+        setChangelog(entries);
+        const newest = entries[0]?.date;
+        if (newest && (storageGet('changelogSeen') || '') < newest) {
+          storageSet('changelogSeen', newest);
+          changelogModal.open();
+        }
+      })
+      .catch(() => {});
+  }, [changelogModal]);
+
   const emptyView = (
     <IllustratedMessage>
       <IconImage />
@@ -168,7 +214,11 @@ export default function App() {
       <header className="app-header">
         <Flex align="center" wrap="wrap" gap="m" className="app-header-content">
           <Text className="wordmark">Meme-Galerie</Text>
-          <HeaderNavigation aria-label="Konto" className="app-nav">
+          <Button variant="soft" color="secondary" size="s" className="app-nav" onPress={openChangelog}>
+            <IconInfo />
+            <Text>Neuigkeiten</Text>
+          </Button>
+          <HeaderNavigation aria-label="Konto">
             <ContextMenuTrigger>
               <Button aria-label="Konto">
                 <Avatar>
@@ -228,7 +278,10 @@ export default function App() {
               >
                 {(meme) => (
                   <div className="meme-tile" title={meme.uploadedBy ? `${meme.name} – von ${meme.uploadedBy.name}` : meme.name}>
-                    <Image src={`/uploads/${meme.file}`} alt={meme.name} aspectRatio={1} withRoundedCorners={false} loading="lazy" decoding="async" />
+                    <div className="tile-media">
+                      <Image src={`/uploads/${meme.poster || meme.file}`} alt={meme.name} aspectRatio={1} withRoundedCorners={false} loading="lazy" decoding="async" />
+                      {meme.poster && <span className="video-badge" aria-label="Video">▶</span>}
+                    </div>
                     <Flex direction="column" gap="xs" padding="s">
                       <Text className="tile-name">{meme.name}</Text>
                       <TileFooter id={meme.id} onVote={vote} />
@@ -249,6 +302,7 @@ export default function App() {
           setMemes((list) => [meme, ...list]);
         }}
       />
+      <ChangelogModal controller={changelogModal} entries={changelog} />
       <MemeModal
         controller={memeModal}
         meme={selected}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Action,
   ActionGroup,
@@ -34,6 +34,37 @@ function download(meme) {
   a.href = `/uploads/${meme.file}`;
   a.download = meme.name + meme.file.slice(meme.file.lastIndexOf('.'));
   a.click();
+}
+
+// Looping video without controls; sound only after a click
+function MemeVideo({ meme }) {
+  const ref = useRef(null);
+  const [muted, setMuted] = useState(true);
+  useEffect(() => {
+    const video = ref.current;
+    video.play().catch(() => {});
+    // Stop and drop the stream when the modal closes or another meme opens
+    return () => {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    };
+  }, []);
+  return (
+    <div className="video-wrap">
+      <video
+        ref={ref}
+        src={`/uploads/${meme.file}`}
+        poster={meme.poster ? `/uploads/${meme.poster}` : undefined}
+        muted={muted}
+        loop
+        playsInline
+        aria-label={`${meme.name} (Video, ${muted ? 'Klicken für Ton' : 'Klicken zum Stummschalten'})`}
+        onClick={() => setMuted((m) => !m)}
+      />
+      <span className="sound-hint" aria-hidden="true">{muted ? '🔇 Klicken für Ton' : '🔊'}</span>
+    </div>
+  );
 }
 
 // Reddit-like comment: author and time in one small line, text below, no chat bubbles
@@ -175,7 +206,11 @@ function Post({ meme, me, onVote, onChanged, onError, onRename, onDelete }) {
       </Text>
 
       <div className="post-image">
-        <Image src={`/uploads/${meme.file}`} alt={meme.name} withRoundedCorners={false} />
+        {meme.file.endsWith('.mp4') ? (
+          <MemeVideo key={meme.id} meme={meme} />
+        ) : (
+          <Image src={`/uploads/${meme.file}`} alt={meme.name} withRoundedCorners={false} />
+        )}
       </div>
 
       <Flex align="center" gap="s" wrap="wrap">

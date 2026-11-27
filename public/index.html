@@ -18,7 +18,8 @@
       </select>
     </div>
     <button id="open-upload" class="primary">+ Hochladen</button>
-    <button type="button" id="switch-ui" class="ghost" title="Neue Oberfläche mit mittwald Flow ausprobieren">Neue Ansicht</button>
+    <button type="button" id="switch-ui" class="try-new" title="Neue Oberfläche mit mittwald Flow ausprobieren">✨ Neue Ansicht testen</button>
+    <button type="button" id="open-changelog" class="ghost" title="Was ist neu?">Neuigkeiten</button>
     <span id="me" class="muted me"></span>
     <form method="post" action="/logout">
       <button type="submit" class="ghost">Abmelden</button>
@@ -35,9 +36,10 @@
     <form id="upload-form">
       <h2>Meme hochladen</h2>
       <label class="dropzone" id="dropzone">
-        <input id="file" type="file" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
+        <input id="file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm" hidden>
         <img id="preview" alt="" hidden>
-        <span id="drop-hint">Bild hierher ziehen, klicken oder mit Strg+V einfügen</span>
+        <video id="preview-video" muted loop playsinline hidden></video>
+        <span id="drop-hint">Bild oder Video hierher ziehen, klicken oder Bild mit Strg+V einfügen</span>
       </label>
       <label>Name
         <input id="name" maxlength="120" required placeholder="z. B. Montagmorgen im Büro">
@@ -53,6 +55,10 @@
   <!-- Detailansicht -->
   <dialog id="view-dialog" class="view">
     <img id="view-img" alt="">
+    <div id="view-video-wrap" class="video-wrap" hidden>
+      <video id="view-video" loop playsinline muted></video>
+      <span id="view-sound" class="sound-hint" aria-hidden="true">🔇 Klicken für Ton</span>
+    </div>
     <div class="view-head">
       <p id="view-meta" class="muted meta"></p>
       <span id="view-votes"></span>
@@ -71,6 +77,15 @@
     <div class="actions">
       <a id="view-download" class="button ghost" download>Herunterladen</a>
       <button type="button" class="danger" id="view-delete">Löschen</button>
+      <button type="button" class="ghost" data-close>Schließen</button>
+    </div>
+  </dialog>
+
+  <!-- Changelog -->
+  <dialog id="changelog-dialog">
+    <h2>Neuigkeiten</h2>
+    <div id="changelog" class="changelog"></div>
+    <div class="actions">
       <button type="button" class="ghost" data-close>Schließen</button>
     </div>
   </dialog>

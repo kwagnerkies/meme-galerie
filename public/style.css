@@ -48,6 +48,14 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .primary { background: var(--accent); color: var(--accent-text); }
 .ghost { background: transparent; color: var(--text); border-color: var(--border); }
 .danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+/* Invitation to the Flow UI: stands out next to the plain header buttons */
+.try-new {
+  background: linear-gradient(135deg, #7c3aed, var(--accent));
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgb(124 58 237 / 0.35);
+}
+.try-new:hover { filter: brightness(1.1); }
 
 input {
   width: 100%;
@@ -132,7 +140,19 @@ main { padding: 1.25rem; max-width: 1400px; margin: 0 auto; }
   text-align: left;
   white-space: normal;
 }
+.card-open { position: relative; }
 .card-open .caption { width: 100%; }
+.video-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 0.8rem;
+  pointer-events: none;
+}
 .card img {
   width: 100%;
   aspect-ratio: 1;
@@ -196,7 +216,7 @@ dialog form { display: grid; gap: 1rem; }
   cursor: pointer;
 }
 .dropzone.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.dropzone img { max-width: 100%; max-height: 260px; border-radius: 8px; }
+.dropzone img, .dropzone video { max-width: 100%; max-height: 260px; border-radius: 8px; }
 
 dialog.view { width: min(960px, calc(100vw - 32px)); }
 .view > img {
@@ -206,6 +226,23 @@ dialog.view { width: min(960px, calc(100vw - 32px)); }
   margin: 0 auto 1rem;
   border-radius: 8px;
 }
+.video-wrap { position: relative; width: fit-content; max-width: 100%; margin: 0 auto 1rem; }
+.video-wrap video { display: block; max-width: 100%; max-height: 70vh; border-radius: 8px; cursor: pointer; background: #000; }
+.sound-hint {
+  position: absolute;
+  bottom: 0.6rem;
+  right: 0.6rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+.changelog { max-height: 60vh; overflow-y: auto; margin-bottom: 1rem; }
+.changelog h3 { margin: 0.75rem 0 0.25rem; font-size: 0.95rem; }
+.changelog section:first-child h3 { margin-top: 0; }
+.changelog ul { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.25rem; }
 .view .rename { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
 .comments { list-style: none; margin: 0 0 0.75rem; padding: 0; max-height: 30vh; overflow-y: auto; display: grid; gap: 0.5rem; }
 .comments:empty { display: none; }

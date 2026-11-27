@@ -13,13 +13,15 @@ ENV NODE_ENV=production \
     DATA_DIR=/data
 
 # npm, yarn und corepack werden zur Laufzeit nicht gebraucht -> weniger Angriffsfläche
+# ffmpeg verkleinert hochgeladene Videos
 RUN apk upgrade --no-cache \
+ && apk add --no-cache ffmpeg \
  && rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx \
            /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn* \
  && mkdir -p /data/uploads && chown -R node:node /data
 
 WORKDIR /app
-COPY --chown=root:root package.json server.js image.js oidc.js ./
+COPY --chown=root:root package.json server.js image.js video.js oidc.js changelog.json ./
 COPY --chown=root:root public ./public
 COPY --from=web --chown=root:root /web/dist ./web/dist
 

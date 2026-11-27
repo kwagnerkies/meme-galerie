@@ -18,7 +18,9 @@ import {
 } from '@mittwald/flow-react-components';
 import { api } from './api.js';
 
-const ACCEPT = 'image/jpeg,image/png,image/gif,image/webp';
+const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
+const ACCEPT = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', ...VIDEO_TYPES].join(',');
+const isVideoFile = (file) => VIDEO_TYPES.includes(file.type);
 const nameFromFile = (file) => file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
 
 export default function UploadModal({ controller, initialFile, onUploaded }) {
@@ -29,7 +31,7 @@ export default function UploadModal({ controller, initialFile, onUploaded }) {
   const [pending, setPending] = useState(false);
 
   const pick = (picked) => {
-    if (!picked || !picked.type.startsWith('image/')) return;
+    if (!picked || !(picked.type.startsWith('image/') || isVideoFile(picked))) return;
     setFile(picked);
     setError(null);
     setName((current) => current || nameFromFile(picked));
@@ -54,7 +56,7 @@ export default function UploadModal({ controller, initialFile, onUploaded }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!file) return setError('Bitte wähle ein Bild aus.');
+    if (!file) return setError('Bitte wähle ein Bild oder Video aus.');
     if (!name.trim()) return setError('Bitte gib dem Meme einen Namen.');
     setPending(true);
     setError(null);
@@ -79,16 +81,18 @@ export default function UploadModal({ controller, initialFile, onUploaded }) {
       <Content>
         <form id="upload-form" onSubmit={submit}>
           <Section>
-            {preview ? (
+            {preview && isVideoFile(file) ? (
+              <video src={preview} className="upload-preview upload-video" autoPlay muted loop playsInline aria-label="Vorschau" />
+            ) : preview ? (
               <Image src={preview} alt="Vorschau" withBorder withRoundedCorners className="upload-preview" />
             ) : (
               <FileDropZone accept={ACCEPT} onChange={(files) => pick(files?.[0])}>
                 <IconImage />
-                <Heading>Bild ablegen</Heading>
-                <Text>JPG, PNG, GIF oder WebP. Einfügen mit Strg+V geht auch.</Text>
+                <Heading>Bild oder Video ablegen</Heading>
+                <Text>JPG, PNG, GIF, WebP oder MP4, MOV, WebM. Videos werden automatisch verkleinert. Bilder einfügen mit Strg+V geht auch.</Text>
                 <FileField accept={ACCEPT}>
                   <Button variant="outline" color="secondary">
-                    Bild auswählen
+                    Datei auswählen
                   </Button>
                 </FileField>
               </FileDropZone>
@@ -96,13 +100,14 @@ export default function UploadModal({ controller, initialFile, onUploaded }) {
             {preview && (
               <FileField accept={ACCEPT} onChange={(files) => pick(files?.[0])}>
                 <Button variant="soft" color="secondary" size="s">
-                  Anderes Bild wählen
+                  Andere Datei wählen
                 </Button>
               </FileField>
             )}
             <TextField value={name} onChange={setName} maxLength={120} isRequired>
               <Label>Name</Label>
             </TextField>
+            {pending && file && isVideoFile(file) && <Text className="muted">Das Video wird hochgeladen und verkleinert, das dauert einen Moment …</Text>}
             {error && <AlertText status="danger">{error}</AlertText>}
           </Section>
         </form>

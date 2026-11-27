@@ -8,14 +8,18 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { TYPES, processImage } = require('./image');
+const video = require('./video');
 const { createOidcClient } = require('./oidc');
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+// Raw video uploads wait here for ffmpeg; inside DATA_DIR because the container root is read-only
+const TMP_DIR = path.join(DATA_DIR, 'tmp');
 const DB_FILE = path.join(DATA_DIR, 'memes.json');
 const SESSION_FILE = path.join(DATA_DIR, 'sessions.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const CHANGELOG_FILE = path.join(__dirname, 'changelog.json');
 // Optional Flow UI (web/, built with `npm run build` there). Users opt in with the "ui=flow" cookie.
 const FLOW_DIR = path.join(__dirname, 'web', 'dist');
 const FLOW_INDEX = path.join(FLOW_DIR, 'index.html');
@@ -23,6 +27,7 @@ const FLOW_INDEX = path.join(FLOW_DIR, 'index.html');
 const USERNAME = process.env.APP_USERNAME || 'cloud';
 const PASSWORD = process.env.APP_PASSWORD || 'hosting';
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 15) * 1024 * 1024;
+const MAX_VIDEO_BYTES = Number(process.env.MAX_VIDEO_MB || 100) * 1024 * 1024;
 // Hinter dem mittwald-Proxy kommt die echte Client-IP aus X-Forwarded-For
 const TRUST_PROXY = process.env.TRUST_PROXY !== 'false';
 
@@ -55,17 +60,21 @@ const MAX_NAME_LENGTH = 120;
 const MAX_COMMENT_LENGTH = 500;
 const MAX_COMMENTS = 200; // pro Meme, damit memes.json nicht unbegrenzt wächst
 const MAX_PARALLEL_UPLOADS = 4;
+const MAX_PARALLEL_TRANSCODES = 2; // ffmpeg is CPU-heavy
 const MAX_VOTES = 5000; // per meme, keeps memes.json bounded
 
-const EXT_TO_MIME = Object.fromEntries(Object.entries(TYPES).map(([mime, t]) => [t.ext, mime]));
+const EXT_TO_MIME = { ...Object.fromEntries(Object.entries(TYPES).map(([mime, t]) => [t.ext, mime])), '.mp4': 'video/mp4' };
 const STATIC_MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
 const FLOW_ASSET_MIME = { ...STATIC_MIME, '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png' };
 // Flow (React Aria) sets inline style attributes and ships its own fonts
-const FLOW_CSP = "default-src 'none'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+const FLOW_CSP = "default-src 'none'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 // ---------- Datenhaltung ----------
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+// Leftovers from an interrupted transcode
+fs.rmSync(TMP_DIR, { recursive: true, force: true });
+fs.mkdirSync(TMP_DIR, { recursive: true });
 try {
   fs.accessSync(DATA_DIR, fs.constants.W_OK);
 } catch {
@@ -219,7 +228,7 @@ const BASE_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
-  'Content-Security-Policy': "default-src 'none'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'none'; img-src 'self' blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 function headersFor(req, extra) {
@@ -244,7 +253,7 @@ function redirect(req, res, location, headers = {}) {
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     if (Number(req.headers['content-length']) > limit) {
-      reject(Object.assign(new Error('too large'), { status: 413 }));
+      reject(Object.assign(new Error('too large'), { status: 413, limit }));
       return;
     }
     const chunks = [];
@@ -252,7 +261,7 @@ function readBody(req, limit) {
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > limit) {
-        reject(Object.assign(new Error('too large'), { status: 413 }));
+        reject(Object.assign(new Error('too large'), { status: 413, limit }));
         req.pause();
         return;
       }
@@ -263,10 +272,61 @@ function readBody(req, limit) {
   });
 }
 
-function serveFile(req, res, filePath, headers) {
+// Streams the request body into a file (videos are too big to buffer)
+function writeBodyToFile(req, file, limit) {
+  return new Promise((resolve, reject) => {
+    const tooLarge = () => Object.assign(new Error('too large'), { status: 413, limit });
+    if (Number(req.headers['content-length']) > limit) return reject(tooLarge());
+    const out = fs.createWriteStream(file, { mode: 0o600 });
+    let size = 0;
+    let failed = false;
+    const fail = (err) => {
+      if (failed) return;
+      failed = true;
+      req.unpipe(out);
+      req.pause();
+      out.destroy();
+      reject(err);
+    };
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) fail(tooLarge());
+    });
+    req.on('error', fail);
+    out.on('error', fail);
+    out.on('finish', () => {
+      if (!failed) resolve(size);
+    });
+    req.pipe(out);
+  });
+}
+
+// `range: true` answers Range requests with 206, which Safari needs to play videos
+function serveFile(req, res, filePath, headers, { range = false } = {}) {
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return send(req, res, 404, 'Nicht gefunden');
+    const match = range && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    if (range) headers = { ...headers, 'Accept-Ranges': 'bytes' };
+    if (match && (match[1] || match[2])) {
+      let start;
+      let end;
+      if (match[1]) {
+        start = Number(match[1]);
+        end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+      } else {
+        // Suffix range: the last n bytes
+        start = Math.max(stat.size - Number(match[2]), 0);
+        end = stat.size - 1;
+      }
+      if (start > end || start >= stat.size) {
+        return send(req, res, 416, '', { ...headers, 'Content-Range': `bytes */${stat.size}` });
+      }
+      res.writeHead(206, headersFor(req, { ...headers, 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${stat.size}` }));
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(filePath, { start, end }).pipe(res);
+    }
     res.writeHead(200, headersFor(req, { ...headers, 'Content-Length': stat.size }));
+    if (req.method === 'HEAD') return res.end();
     fs.createReadStream(filePath).pipe(res);
   });
 }
@@ -342,6 +402,37 @@ async function storeUpload(req) {
   const file = id + image.ext;
   fs.writeFileSync(path.join(UPLOAD_DIR, file), image.data, { mode: 0o600 });
   return { id, file };
+}
+
+// Reads a video from the request body and lets ffmpeg shrink it.
+// Result: { id, file, poster } or { status, error }.
+let activeTranscodes = 0;
+async function storeVideo(req) {
+  if (!video.available) return { status: 501, error: 'Videos gehen auf diesem Server nicht (ffmpeg fehlt)' };
+  if (activeTranscodes >= MAX_PARALLEL_TRANSCODES) return { status: 503, error: 'Gerade werden schon Videos verarbeitet – bitte gleich nochmal versuchen' };
+  activeTranscodes++;
+  const id = crypto.randomUUID();
+  const raw = path.join(TMP_DIR, id);
+  const file = id + '.mp4';
+  const poster = crypto.randomUUID() + '.jpg';
+  const out = path.join(UPLOAD_DIR, file);
+  const posterOut = path.join(UPLOAD_DIR, poster);
+  try {
+    await writeBodyToFile(req, raw, MAX_VIDEO_BYTES);
+    if (!(await video.processVideo(raw, out, posterOut))) {
+      return { status: 415, error: 'Nur MP4-, MOV- oder WebM-Videos erlaubt' };
+    }
+    return { id, file, poster };
+  } catch (err) {
+    fs.rmSync(out, { force: true });
+    fs.rmSync(posterOut, { force: true });
+    if (err.status) throw err;
+    console.error(`Video-Verarbeitung fehlgeschlagen: ${err.message}`);
+    return { status: 422, error: 'Das Video konnte nicht verarbeitet werden' };
+  } finally {
+    activeTranscodes--;
+    fs.rm(raw, { force: true }, () => {});
+  }
 }
 
 async function handle(req, res) {
@@ -466,15 +557,19 @@ async function handle(req, res) {
   if (pathname.startsWith('/uploads/') && method === 'GET') {
     const file = pathname.slice('/uploads/'.length);
     const mime = EXT_TO_MIME[path.extname(file)];
-    if (!mime || !/^[a-f0-9-]{36}\.[a-z]+$/.test(file)) return send(req, res, 404, 'Nicht gefunden');
+    if (!mime || !/^[a-f0-9-]{36}\.[a-z0-9]+$/.test(file)) return send(req, res, 404, 'Nicht gefunden');
     return serveFile(req, res, path.join(UPLOAD_DIR, file), {
       'Content-Type': mime,
       'Cache-Control': 'private, max-age=31536000, immutable',
       'Content-Security-Policy': "default-src 'none'; sandbox",
-    });
+    }, { range: true });
   }
 
   if (pathname === '/api/me' && method === 'GET') return sendJson(req, res, 200, user);
+
+  if (pathname === '/api/changelog' && method === 'GET') {
+    return serveFile(req, res, CHANGELOG_FILE, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+  }
 
   if (pathname === '/api/memes' && method === 'GET') {
     const q = (url.searchParams.get('q') || '').toLowerCase().trim();
@@ -484,13 +579,16 @@ async function handle(req, res) {
     return sendJson(req, res, 200, sorted.map((m) => publicMeme(m, key)));
   }
 
-  // Upload: Bild als roher Request-Body, Name als Query-Parameter
+  // Upload: Bild oder Video als roher Request-Body, Name als Query-Parameter.
+  // Videos (Content-Type video/*) werden mit ffmpeg verkleinert und bekommen ein Vorschaubild.
   if (pathname === '/api/memes' && method === 'POST') {
     const name = cleanName(url.searchParams.get('name'));
     if (!name) return sendJson(req, res, 400, { error: 'Bitte einen Namen angeben' });
-    const up = await storeUpload(req);
+    const isVideo = String(req.headers['content-type'] || '').startsWith('video/');
+    const up = isVideo ? await storeVideo(req) : await storeUpload(req);
     if (up.error) return sendJson(req, res, up.status, { error: up.error });
     const meme = { id: up.id, name, file: up.file, createdAt: new Date().toISOString(), uploadedBy: user };
+    if (up.poster) meme.poster = up.poster;
     memes.push(meme);
     saveDb();
     return sendJson(req, res, 201, publicMeme(meme, null));
@@ -589,7 +687,7 @@ async function handle(req, res) {
     if (method === 'DELETE' && !isComment) {
       memes = memes.filter((m) => m.id !== meme.id);
       saveDb();
-      const files = [meme.file, ...(meme.comments || []).map((c) => c.file).filter(Boolean)];
+      const files = [meme.file, meme.poster, ...(meme.comments || []).map((c) => c.file)].filter(Boolean);
       for (const file of files) fs.rm(path.join(UPLOAD_DIR, file), { force: true }, () => {});
       return send(req, res, 204, '');
     }
@@ -605,7 +703,7 @@ const server = http.createServer((req, res) => {
       // Antwort senden, dann Verbindung schließen statt den Rest der Datei anzunehmen
       res.setHeader('Connection', 'close');
       res.on('finish', () => req.destroy());
-      return sendJson(req, res, 413, { error: `Datei zu groß (max. ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)` });
+      return sendJson(req, res, 413, { error: `Datei zu groß (max. ${Math.round((err.limit || MAX_UPLOAD_BYTES) / 1024 / 1024)} MB)` });
     }
     console.error(err);
     sendJson(req, res, 500, { error: 'Interner Fehler' });
@@ -614,11 +712,12 @@ const server = http.createServer((req, res) => {
 
 // Langsame oder hängende Verbindungen nicht ewig offen halten
 server.headersTimeout = 20 * 1000;
-server.requestTimeout = 120 * 1000;
+server.requestTimeout = 10 * 60 * 1000; // großzügig für Video-Uploads über langsame Leitungen
 server.keepAliveTimeout = 5 * 1000;
 
 server.listen(PORT, () => {
   console.log(`Meme-Galerie läuft auf Port ${PORT}, Daten in ${DATA_DIR}`);
+  if (!video.available) console.warn('WARNUNG: ffmpeg mit libx264/aac nicht gefunden, Video-Uploads sind abgeschaltet.');
   if (OIDC_ENABLED) console.log(`Login zusätzlich per OIDC über ${OIDC_ISSUER}, Redirect-URI ${APP_URL}/auth/callback`);
   if (PASSWORD === 'hosting' || PASSWORD.length < 12) {
     console.warn('WARNUNG: Schwaches Passwort. Für den Betrieb APP_PASSWORD auf ein langes, zufälliges Passwort setzen.');

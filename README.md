@@ -5,12 +5,14 @@ Interne Galerie für Memes: Login, Bilder hochladen und benennen, Galerie mit Su
 - Ein Node.js-Server ohne externe Abhängigkeiten, also kein `npm install` nötig
 - Bilder (JPG, PNG, GIF, WebP, max. 15 MB) liegen in `/data/uploads`, Namen in `/data/memes.json`
 - Hochladen per Button, Drag & Drop oder Strg+V (Screenshot aus der Zwischenablage)
+- **Videos** (MP4, MOV, WebM, max. 100 MB) gehen auch. Der Server verkleinert sie mit ffmpeg auf eine MP4-Datei (H.264/AAC, längste Seite max. 1280 px, max. 30 fps, max. 5 Minuten, Metadaten entfernt) und speichert ein Vorschaubild für die Galerie. Das Original wird nicht aufgehoben. In der Detailansicht läuft das Video ohne Player in Dauerschleife, stumm; ein Klick schaltet den Ton an und aus. Ohne installiertes ffmpeg (lokal: `brew install ffmpeg`) sind Video-Uploads abgeschaltet, im Docker-Image ist es dabei
+- **Neuigkeiten**: Der Changelog steht in `changelog.json` (neueste Einträge oben). Gibt es einen neuen Eintrag, öffnet er sich in jedem Browser einmal als Popup, danach über den Button „Neuigkeiten“
 - Klick auf ein Bild: groß ansehen, kommentieren, umbenennen, herunterladen, löschen
 - Kommentare (max. 500 Zeichen, 200 pro Meme) liegen mit in `memes.json`. Ein Kommentar kann ein Bild enthalten (📎, Strg+V oder Drag & Drop), es gelten dieselben Regeln wie beim Upload
 - Login wahlweise mit gemeinsamem Passwort oder per OpenID Connect (z. B. Keycloak), siehe [Login mit Keycloak](#login-mit-keycloak-oidc)
 - Bei jedem Meme steht, wer es hochgeladen hat, bei jedem Kommentar, wer ihn geschrieben hat. Eigene Kommentare kann man löschen (✕). Wer sich mit dem Standard-User (Passwort) anmeldet, teilt sich diesen Benutzer mit allen anderen Passwort-Logins, deren Kommentare können also gegenseitig gelöscht werden
 - Up- und Downvotes (▲/▼) an jedem Meme, in der Galerie und in der Detailansicht. Da sich Passwort-Logins einen Benutzer teilen, zählt die Stimme pro Browser: dieser bekommt eine zufällige Voter-ID im `localStorage`, die eigenen Stimmen werden dort zwischengespeichert und im Backend in `memes.json` abgelegt. Erneuter Klick nimmt die Stimme zurück. OIDC-Nutzer stimmen mit ihrem Account ab
-- Neue Ansicht (Beta) mit [mittwald Flow](https://flow.mittwald.de): In der klassischen Ansicht schaltet „Neue Ansicht“ oben rechts um, zurück geht es über das Konto-Menü. Die Wahl liegt im Cookie `ui=flow`. Der Code steht in `web/` (React + Vite), das Docker-Image baut ihn mit. Lokal: `cd web && npm install && npm run build`, danach `node server.js`. Ohne Build liefert der Server immer die klassische Ansicht aus. Für die Entwicklung mit Hot Reload: Server starten und in `web/` `npm run dev` (Proxy auf Port 3000)
+- Neue Ansicht (Beta) mit [mittwald Flow](https://flow.mittwald.de): In der klassischen Ansicht schaltet „✨ Neue Ansicht testen“ oben rechts um, zurück geht es über das Konto-Menü. Die Wahl liegt im Cookie `ui=flow`. Der Code steht in `web/` (React + Vite), das Docker-Image baut ihn mit. Lokal: `cd web && npm install && npm run build`, danach `node server.js`. Ohne Build liefert der Server immer die klassische Ansicht aus. Für die Entwicklung mit Hot Reload: Server starten und in `web/` `npm run dev` (Proxy auf Port 3000)
 
 ## Sicherheit
 
@@ -18,6 +20,7 @@ Interne Galerie für Memes: Login, Bilder hochladen und benennen, Galerie mit Su
 - Nach 10 falschen Logins pro IP ist das Login 15 Minuten gesperrt. Jeder Fehlversuch wird zusätzlich um 1 Sekunde verzögert und geloggt
 - Schutz gegen CSRF (Prüfung von Origin und Sec-Fetch-Site), strenge Content-Security-Policy und weitere Security-Header, HSTS hinter HTTPS
 - Den Bildtyp erkennt der Server am Dateiinhalt. Erlaubt sind nur JPG, PNG, GIF und WebP, also kein SVG/HTML
+- Videos werden immer neu kodiert, ausgeliefert wird nur das Ergebnis. ffmpeg bekommt den Container fest vorgegeben (MP4/MOV oder WebM/MKV, am Dateiinhalt erkannt) und darf nur lokale Dateien lesen. Höchstens 2 Videos werden gleichzeitig verarbeitet, nach 5 Minuten wird abgebrochen
 - **Metadaten werden entfernt**: EXIF (z. B. GPS-Position vom Handy), XMP, IPTC und Kommentare. Bei JPEGs bleibt nur die Bildausrichtung erhalten
 - Container läuft ohne root, npm ist aus dem Image entfernt
 - Bilder und Daten werden mit Dateirechten `600` gespeichert, also nur für den Container-User zugänglich. Die Sessions werden nur als Hash gespeichert
@@ -34,7 +37,8 @@ Interne Galerie für Memes: Login, Bilder hochladen und benennen, Galerie mit Su
 | `APP_URL`        | –         | Öffentliche URL der Galerie ohne `/` am Ende, z. B. `https://memes.example.de`. Daraus wird die Redirect-URI `<APP_URL>/auth/callback` |
 | `OIDC_SCOPE`     | `openid profile email` | Angefragte Scopes                           |
 | `TRUST_PROXY`    | `true`    | `X-Forwarded-*`-Header vom Reverse-Proxy auswerten (bei mittwald richtig). Ohne Proxy auf `false` setzen |
-| `MAX_UPLOAD_MB`  | `15`      | Maximale Dateigröße                                      |
+| `MAX_UPLOAD_MB`  | `15`      | Maximale Dateigröße für Bilder                           |
+| `MAX_VIDEO_MB`   | `100`     | Maximale Dateigröße für Videos (vor dem Verkleinern)     |
 | `PORT`           | `3000`    | Port im Container                                        |
 | `DATA_DIR`       | `/data`   | Speicherort für Bilder und Metadaten                     |
 

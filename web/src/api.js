@@ -1,7 +1,7 @@
 // Backend access plus the per-browser voter id and vote cache.
 // Uses the same localStorage keys as the classic UI, so votes survive switching UIs.
 
-function storageGet(key) {
+export function storageGet(key) {
   try {
     return localStorage.getItem(key);
   } catch {
@@ -9,7 +9,7 @@ function storageGet(key) {
   }
 }
 
-function storageSet(key, value) {
+export function storageSet(key, value) {
   try {
     localStorage.setItem(key, value);
   } catch {

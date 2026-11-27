@@ -1,0 +1,32 @@
+[
+  {
+    "date": "2026-11-27",
+    "items": [
+      "Videos hochladen (MP4, MOV, WebM). Sie werden automatisch verkleinert und laufen in Dauerschleife, Ton per Klick",
+      "Changelog in beiden Ansichten",
+      "Der Button für die neue Ansicht ist besser zu sehen"
+    ]
+  },
+  {
+    "date": "2026-11-24",
+    "items": [
+      "Neue Ansicht (Beta) mit mittwald Flow, umschaltbar oben rechts",
+      "Up- und Downvotes an jedem Meme",
+      "Galerie sortieren nach Neueste, meisten Upvotes oder bestem Score"
+    ]
+  },
+  {
+    "date": "2026-11-16",
+    "items": [
+      "Login per Keycloak (OIDC), Login mit Passwort bleibt möglich",
+      "Bei Memes und Kommentaren steht, wer sie geschrieben hat. Eigene Kommentare lassen sich löschen",
+      "Kommentare mit Text und Bild an jedem Meme"
+    ]
+  },
+  {
+    "date": "2026-10-01",
+    "items": [
+      "Meme-Galerie mit Login, Upload und Suche"
+    ]
+  }
+]

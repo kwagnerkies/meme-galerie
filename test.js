@@ -286,3 +286,74 @@ test('Sessions nach Neustart', async (t) => {
   assert.deepStrictEqual(await me(cookie), { id: 'local', name: 'u' });
   assert.deepStrictEqual(await me(`session=${legacyToken}`), { id: 'local', name: 'u' });
 });
+
+// Video upload: ffmpeg shrinks it to MP4 with a poster; Range requests for Safari
+const hasFfmpeg = (() => {
+  try {
+    return require('node:child_process').spawnSync('ffmpeg', ['-version']).status === 0;
+  } catch {
+    return false;
+  }
+})();
+test('Video-Upload', { skip: !hasFfmpeg && 'ffmpeg fehlt' }, async (t) => {
+  const { spawnSync } = require('node:child_process');
+  const VIDEO_PORT = 3996;
+  const url = `http://127.0.0.1:${VIDEO_PORT}`;
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'meme-test-'));
+  const input = path.join(dataDir, 'in.mov');
+  // 2 s test pattern, 1920x1080 with sound and a title tag that must not survive
+  const gen = spawnSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=60:duration=2',
+    '-f', 'lavfi', '-i', 'sine=duration=2', '-metadata', 'title=geheim', '-c:v', 'libx264', '-c:a', 'aac', '-shortest', '-y', input]);
+  assert.strictEqual(gen.status, 0, String(gen.stderr));
+  const server = spawn(process.execPath, ['server.js'], {
+    cwd: __dirname,
+    env: { ...process.env, PORT: VIDEO_PORT, DATA_DIR: dataDir, TRUST_PROXY: 'false', APP_USERNAME: 'u', APP_PASSWORD: 'p', MAX_VIDEO_MB: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => {
+    server.kill();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.stdout.once('data', resolve);
+    server.once('exit', () => reject(new Error('Server nicht gestartet')));
+  });
+  const login = await fetch(`${url}/login`, { method: 'POST', body: new URLSearchParams({ username: 'u', password: 'p' }), redirect: 'manual' });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const upload = (body, type = 'video/quicktime') => fetch(`${url}/api/memes?name=clip`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': type }, body });
+
+  const res = await upload(fs.readFileSync(input));
+  assert.strictEqual(res.status, 201);
+  const meme = await res.json();
+  assert.match(meme.file, /^[a-f0-9-]{36}\.mp4$/);
+  assert.match(meme.poster, /^[a-f0-9-]{36}\.jpg$/);
+
+  const out = path.join(dataDir, 'uploads', meme.file);
+  const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,width,height:format_tags', '-of', 'json', out], { encoding: 'utf8' });
+  const info = JSON.parse(probe.stdout);
+  const v = info.streams.find((s) => s.codec_name === 'h264');
+  assert.deepStrictEqual([v.width, v.height], [1280, 720]);
+  assert.ok(info.streams.some((s) => s.codec_name === 'aac'));
+  assert.ok(!JSON.stringify(info.format || {}).includes('geheim'));
+  assert.strictEqual(fs.statSync(out).mode & 0o777, 0o600);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'tmp')), []);
+
+  const ranged = await fetch(`${url}/uploads/${meme.file}`, { headers: { Cookie: cookie, Range: 'bytes=0-99' } });
+  assert.strictEqual(ranged.status, 206);
+  assert.strictEqual(ranged.headers.get('content-type'), 'video/mp4');
+  assert.strictEqual((await ranged.arrayBuffer()).byteLength, 100);
+  assert.strictEqual((await fetch(`${url}/uploads/${meme.poster}`, { headers: { Cookie: cookie } })).status, 200);
+
+  // No video, too large
+  assert.strictEqual((await upload(Buffer.from('kein video, nur text'))).status, 415);
+  assert.strictEqual((await upload(Buffer.alloc(2 * 1024 * 1024))).status, 413);
+
+  // Changelog
+  const log = await (await fetch(`${url}/api/changelog`, { headers: { Cookie: cookie } })).json();
+  assert.ok(Array.isArray(log) && log[0].date && log[0].items.length);
+
+  // Deleting removes video and poster
+  assert.strictEqual((await fetch(`${url}/api/memes/${meme.id}`, { method: 'DELETE', headers: { Cookie: cookie } })).status, 204);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepStrictEqual(fs.readdirSync(path.join(dataDir, 'uploads')), []);
+});

@@ -9,6 +9,7 @@ services:
       APP_USERNAME: cloud
       APP_PASSWORD: hosting
       MAX_UPLOAD_MB: "15"
+      MAX_VIDEO_MB: "100"
       # Lokal ohne Reverse-Proxy: X-Forwarded-*-Header nicht vertrauen
       TRUST_PROXY: "false"
     volumes:
